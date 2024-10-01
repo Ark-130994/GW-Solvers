@@ -6,6 +6,8 @@ import torch
 import diffrax
 
 from tqdm import tqdm
+from tqdm.auto import trange
+
 from ott.neural.methods.flows import dynamics
 
 import jax
@@ -15,13 +17,14 @@ from ott.geometry import costs, geometry, pointcloud
 from ott.problems.quadratic import quadratic_problem
 from ott.solvers.linear import sinkhorn
 from ott.solvers.quadratic import gromov_wasserstein
+from ott.neural.networks.layers import time_encoder
 
 import optax
 
 import jax
 import jax.numpy as jnp
 from tqdm import tqdm_notebook as tqdm
-from tqdm.auto import trange
+
 
 import wandb
 from ott.solvers import utils as solver_utils
@@ -44,7 +47,6 @@ from ott import utils
 from src.metrics import compute_metrics
 
 import matplotlib.pyplot as plt
-
 
 #def report_wandb_fn(metrics_dict, metrics_names, epoch):
 #
@@ -90,12 +92,8 @@ class GENOT:
         
         input_dim: int,
         output_dim: int,
-        fused_dim: int,
-        iterations: int,
         k_latent_per_x: int = 1,
-        fused_penalty: int = (1.0-0.3)/0.3,
-        cost_fn = costs.Cosine(),
-        lr = 1e-4,
+        cost_fn = costs.Cosine(),#costs.SqEuclidean(),
         scale_cost = 1.0,
         seed: int = 0,
         **kwargs,
@@ -107,20 +105,14 @@ class GENOT:
 
         self.rng = jax.random.PRNGKey(seed)
         self.seed = seed
-        self.iterations = iterations
 
         self.neural_net = neural_net
         self.state_neural_net = None
-        self.optimizer = optax.adamw(learning_rate=lr, weight_decay=1e-10)
+        self.optimizer = optax.adamw(learning_rate=1e-4, weight_decay=1e-10)
         self.latent_fn = functools.partial(_multivariate_normal, dim=output_dim)
 
         self.input_dim = input_dim
         self.output_dim = output_dim
-        self.fused_dim = fused_dim
-        self.fused_penalty = fused_penalty
-        if self.fused_dim == 0:
-            self.fused_penalty = 0
-            
         self.k_latent_per_x = k_latent_per_x
 
         self.cost_fn = cost_fn
@@ -133,7 +125,7 @@ class GENOT:
         self.step_fn = self._get_step_fn()
                 
         self.match_fn = self._get_gromov_match_fn(self.ot_solver, cost_fn=self.cost_fn, scale_cost=self.scale_cost,
-                                                  k_samples_per_x=self.k_latent_per_x, fused_dim=self.fused_dim, fused_penalty=self.fused_penalty)
+                                                  k_samples_per_x=self.k_latent_per_x)
 
     def __call__(self, source_train, target_train):
         
@@ -151,26 +143,21 @@ class GENOT:
        
         self.state_neural_net = self.step_fn(rng_step_fn, self.state_neural_net, train_batch)
 
-    def _get_gromov_match_fn(self, ot_solver, cost_fn, scale_cost, k_samples_per_x, fused_dim, fused_penalty):
+    def _get_gromov_match_fn(self, ot_solver, cost_fn, scale_cost, k_samples_per_x):
         
-        @partial(jax.jit, static_argnames=[ "ot_solver", "cost_fn", "scale_cost", "k_samples_per_x", "fused_dim", "fused_penalty"])
-        def match_pairs(key, x, y, ot_solver, cost_fn, scale_cost, k_samples_per_x, fused_dim, fused_penalty) :
+        @partial(jax.jit, static_argnames=[ "ot_solver", "cost_fn", "scale_cost", "k_samples_per_x"])
+        def match_pairs(key, x, y, ot_solver, cost_fn, scale_cost, k_samples_per_x) :
 
-            geom_xx = pointcloud.PointCloud(x=x[..., fused_dim:], y=x[..., fused_dim:], cost_fn=cost_fn, scale_cost=scale_cost)
-            geom_yy = pointcloud.PointCloud(x=y[..., fused_dim:], y=y[..., fused_dim:], cost_fn=cost_fn, scale_cost=scale_cost)
+            geom_xx = pointcloud.PointCloud(x=x[..., 0:], y=x[..., 0:], cost_fn=cost_fn, scale_cost=scale_cost)
+            geom_yy = pointcloud.PointCloud(x=y[..., 0:], y=y[..., 0:], cost_fn=cost_fn, scale_cost=scale_cost)
 
-            if fused_dim > 0:
-                geom_xy = pointcloud.PointCloud(x=x[..., :fused_dim], y=y[..., :fused_dim], cost_fn=cost_fn, scale_cost=scale_cost)
-            else:
-                geom_xy = None
-                
-            prob = quadratic_problem.QuadraticProblem(geom_xx, geom_yy, geom_xy, fused_penalty=fused_penalty, tau_a=1.0, tau_b=1.0)
+            geom_xy = None
+            prob = quadratic_problem.QuadraticProblem(geom_xx, geom_yy, geom_xy, fused_penalty=0.0, tau_a=1.0, tau_b=1.0)
             out = ot_solver(prob).matrix
 
-            return out
+            return out#
 
-        return jax.tree_util.Partial(match_pairs, ot_solver=ot_solver, cost_fn=cost_fn, scale_cost=scale_cost, k_samples_per_x=k_samples_per_x, fused_dim=fused_dim, fused_penalty=fused_penalty)
-
+        return jax.tree_util.Partial(match_pairs, ot_solver=ot_solver, cost_fn=cost_fn, scale_cost=scale_cost, k_samples_per_x=k_samples_per_x, )
 
     def _get_step_fn(self) -> Callable:
 
@@ -251,126 +238,52 @@ class GENOT:
     
         return jax.jit(jax.vmap(solve_ode))(latent, source)
 
-class FlowGW:
+class FlowGW_mb:
     
-    def __init__(self, eps, embed_dim, n_freq, n_layers, cost_fn, lr, toy_type=None):
+    def __init__(self, model, source_dim, target_dim, eps, cost_fn, seed):
+        self.model = model
         self.eps = eps
-        self.embed_dim = embed_dim
-        self.n_freq = n_freq
-        self.n_layers = n_layers
+
+        self.source_dim = source_dim
+        self.target_dim = target_dim
+ 
         self.cost_fn = cost_fn
-        self.toy_type = toy_type
-        self.lr = lr
-        
-    def solve(self, x_dict, y_dict, labels_dict, target_vectors, fused_dim=0, wandb_report=False, maxiters=200, report_every=20):
 
-        x_train, y_train, labels_train = x_dict['train'], y_dict['train'], labels_dict['train']
-        x_train_jnp, y_train_jnp = np.asarray(x_train.cpu().numpy()), np.asarray(y_train.cpu().numpy())
-        x_train_jnp, y_train_jnp = jtu.tree_map(jnp.asarray, x_train_jnp), jtu.tree_map(jnp.asarray, y_train_jnp)
-        x_test, y_test, labels_test = x_dict['test'], y_dict['test'], labels_dict['test']
-
-        if x_test is not None:
-            x_test_jnp = np.asarray(x_test.cpu().numpy())
-            x_test_jnp = jtu.tree_map(jnp.asarray, x_test_jnp)
-
-        source_dim = x_test.shape[1]
-        target_dim = y_test.shape[1]
-
-        metric_names = ['Top@1', 'Top@5', 'Top@10', 'cossim_gt', 'inner_gw', 'foscttm']
-
-        metrics_dict_train = {metric_name:[] for metric_name in metric_names}
-        metrics_dict_test = {metric_name:[] for metric_name in metric_names}
-
-        neural_net = VelocityField(
-                hidden_dims=[self.embed_dim]*self.n_layers,
-                time_dims=[self.embed_dim, self.embed_dim],
-                output_dims=[self.embed_dim, self.embed_dim, self.embed_dim] + [target_dim],
-                condition_dims=[self.embed_dim, self.embed_dim, self.embed_dim],
-                time_encoder=functools.partial(time_encoder.cyclical_time_encoder, n_freqs=self.n_freq),
-            )
-        
         linear_ot_solver = sinkhorn.Sinkhorn(momentum=acceleration.Momentum(value=1.0, start=25))
         solver = gromov_wasserstein.GromovWasserstein(epsilon=self.eps, linear_ot_solver=linear_ot_solver)
-        genot_fgw = GENOT(
-                    neural_net,
-                    flow = dynamics.ConstantNoiseFlow(0.0),
-                    ot_solver=solver,
-                    scale_cost="mean",
-                    input_dim=source_dim,
-                    output_dim=target_dim,
-                    cost_fn=self.cost_fn,
-                    lr=self.lr,
-                    fused_dim=fused_dim,
-                    fused_penalty=(1.0-0.3)/0.3,
-                    iterations=maxiters,
-                    k_latent_per_x=1,
-        )
+        self.genot_fgw = GENOT(
+                               self.model,
+                               flow = dynamics.ConstantNoiseFlow(0.0),
+                               ot_solver=solver,
+                               scale_cost="mean",
+                               cost_fn=self.cost_fn,
+                               input_dim=source_dim,
+                               output_dim=target_dim,
+                               k_latent_per_x=1,
+                               seed=seed
+                              )
 
-        for it in tqdm(range(maxiters)):
-            genot_fgw(x_train_jnp, y_train_jnp)
-
-            if ((it) % report_every == 0 and it!=0) or it == maxiters-1:
-
-                if self.toy_type is None:
-
-                    if wandb_report:
-                        y_sampled = np.asarray(genot_fgw.transport(x_train_jnp, rng=jax.random.PRNGKey(0)))#[0][0, ...])
-                        y_sampled_test = np.asarray(genot_fgw.transport(x_test_jnp, rng=jax.random.PRNGKey(0)))#[0][0, ...])
-                        
-                        y_sampled = torch.tensor(y_sampled).to(torch.float32)
-                        y_sampled_test = torch.tensor(y_sampled_test).to(torch.float32)
-                        
-                        metrics_dict_train = compute_metrics(x_train, y_train, y_sampled, labels_train.cpu(), target_vectors.cpu(), metrics_dict_train)
-                        report_wandb_fn(metrics_dict_train, metric_names, it, 'train')
-                        
-                        metrics_dict_test = compute_metrics(x_test, y_test, y_sampled_test, labels_test.cpu(), target_vectors.cpu(), metrics_dict_test)
-                        report_wandb_fn(metrics_dict_test, metric_names, it, 'test')
-                        
-                    else:
-                        pass
-                else:
-                    
-                    y_sampled_np = genot_fgw.transport(x_train_jnp, rng=jax.random.PRNGKey(0))
-                    y_sampled_np = np.asarray(y_sampled_np)
-                
-                    fig = plt.figure(figsize=(8, 8))
-                    
-                    if self.toy_type == 'toy_2d_3d':
-                        ax = fig.add_subplot(projection='3d')
-                       
-                    if self.toy_type == 'toy_3d_2d':
-                        ax = fig.add_subplot(projection=None)
-                        
-                    ax.scatter(*y_sampled_np.T, c=labels_train.cpu().numpy(),  cmap="Spectral")
-                    plt.show()
-                    
-        return genot_fgw
-
-    def fit(self, x_dict, y_dict, labels_dict, target_vectors, fused_dim=0, wandb_report=False, max_iters=200, report_every=10):
+    def train_epoch(self, sampler, n_samples, n_iters, epoch, wandb_report):
         
-        self.x_dict, self.y_dict, self.labels_dict = x_dict, y_dict, labels_dict
-        
-        model = self.solve(self.x_dict, self.y_dict, self.labels_dict, target_vectors, fused_dim, wandb_report, max_iters, report_every)
-        
-        self.model = model
+        x_train, y_train, labels_train = sampler.sample(n_samples)   
+        x_train_jnp, y_train_jnp = np.asarray(x_train.cpu().numpy()), np.asarray(y_train.cpu().numpy())
+        x_train_jnp, y_train_jnp = jtu.tree_map(jnp.asarray, x_train_jnp), jtu.tree_map(jnp.asarray, y_train_jnp)
+
+        self.genot_fgw(x_train_jnp, y_train_jnp)
         
     def valid_step(self, sampler, n_samples, metric_names, target_vectors, n_eval):
             
         metrics_dict = {metric_name:[] for metric_name in metric_names}
         
-        with torch.no_grad():
-        
-            sampler.reset_sampler()
-
-            for _ in trange(n_eval, leave=False, desc="Evaluation"):
-                x, y, labels = sampler.sample(n_samples)
-                x, y, labels = x.cpu(), y.cpu(), labels.cpu()
-                x_jnp = np.asarray(x.numpy())
-                y_sampled = self.model.transport(x_jnp)
-                y_sampled = torch.tensor(np.asarray(y_sampled)).to(torch.float32)
-
-                metrics_dict = compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict)
+        for _ in trange(n_eval, leave=False, desc="Evaluation"):
+            x, y, labels = sampler.sample(n_samples)
+            x_jnp = jnp.array(x.cpu().numpy())
+            y_sampled = self.genot_fgw.transport(x_jnp)
+                    
+            y_sampled = torch.tensor(np.asarray(y_sampled)).to(torch.float32)
+                    
+            metrics_dict = compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict)
             
-            return metrics_dict
+        return metrics_dict
 
 

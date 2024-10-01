@@ -8,9 +8,12 @@ src/solvers_discrete/*
 !src/solvers_discrete/AlignGW.py
 !src/solvers_discrete/FlowGW.py
 !src/solvers_discrete/StructuredGW.py
+!src/solvers_discrete/RegGW.py
 
 src/solvers_continuous/*
 !src/solvers_continuous/NeuralGW.py
+!src/solvers_continuous/RegGW_mb.py
+!src/solvers_continuous/FlowGW_mb.py
 
 src/dataset_loaders-Copy1.py
 src/dataset_loaders.py
@@ -20,9 +23,8 @@ src/train-Copy1.py
 src/models/general_solvers.py
 
 notebooks/*
-!notebooks/GWSolvers_discrete_toy.ipynb
-!notebooks/GWSolvers_NeuralGW.ipynb
-!notebooks/GWSolvers_discrete_new_split.ipynb
+!notebooks/GWSolvers_discrete.ipynb
+!notebooks/GWSolvers_continuous.ipynb
 
 *.ipynb_checkpoints
 *__pycache__

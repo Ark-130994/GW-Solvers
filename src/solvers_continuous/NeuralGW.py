@@ -80,7 +80,7 @@ class NeuralGW:
 
         return P
     
-    def valid_step(self, sampler, n_samples, metric_names, target_vectors, n_eval, entropic_pred=True):
+    def valid_step(self, sampler, n_samples, metric_names, target_vectors, n_eval):
         
         self.critic_model.eval()
         self.mover_model.eval()

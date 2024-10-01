@@ -88,13 +88,16 @@ def get_indices(data_path, config):
 
     assert N_MAX_SAMPLES - N_TEST_SAMPLES >= N_TRAIN_SAMPLES, 'Reduce the number of train or test samples.'
 
-    random_indices       = random.sample(range(0, N_MAX_SAMPLES - N_TEST_SAMPLES), N_TRAIN_SAMPLES)            
+    indices_train = random.sample(range(0, N_MAX_SAMPLES - N_TEST_SAMPLES), N_TRAIN_SAMPLES) 
     indices_test  = list(range(N_MAX_SAMPLES - N_TEST_SAMPLES, N_MAX_SAMPLES))
 
-    random_indices.extend(indices_test)
+    #indices       = indices_train[:]
+    #indices.extend(indices_test)
+
+    space_indices = list(range(0, N_MAX_SAMPLES))
     
-    indices_train = list(range(0, N_TRAIN_SAMPLES))
-    indices_test  = list(range(N_TRAIN_SAMPLES, N_TRAIN_SAMPLES + N_TEST_SAMPLES))
+    #indices_train = list(range(0, N_TRAIN_SAMPLES))
+    #indices_test  = list(range(N_TRAIN_SAMPLES, N_TRAIN_SAMPLES + N_TEST_SAMPLES))
     
     if DATASET_NAME in ['wiki-gigaword', 'twitter']:
         source_model, target_model = load_glove(DATASET_NAME, data_path, var_sp.SOURCE_DIM, var_sp.TARGET_DIM)
@@ -102,10 +105,11 @@ def get_indices(data_path, config):
         source_class = embeddings(source_model)
         target_class = embeddings(target_model)
         
-        random_words = [source_class.i2w[ix] for ix in random_indices]
+        #random_words = [source_class.i2w[ix] for ix in random_indices]
+        space_words = [source_class.i2w[ix] for ix in space_indices]
         
-        source_class.restrict(random_words)
-        target_class.restrict(random_words)
+        source_class.restrict(space_words)
+        target_class.restrict(space_words)
         
         return source_class.vectors, target_class.vectors, indices_train, indices_test
         
@@ -117,7 +121,7 @@ def get_indices(data_path, config):
         
     
 def get_samplers(source_vectors, target_vectors, random_indices_train, random_indices_test, config):
-    
+
     var_sp = SimpleNamespace(**config['dataset']) 
                                    
     random_indices_train_source = random_indices_train[:int(len(random_indices_train) * (0.5))]
@@ -127,13 +131,14 @@ def get_samplers(source_vectors, target_vectors, random_indices_train, random_in
     random_indices_train_target = torch.tensor(random_indices_train_target).to(torch.int32)
 
     random_indices_test = torch.tensor(random_indices_test).to(torch.int32)
+
     
     print('Source pairs...')
-    print(random_indices_train_source)
+    #print(random_indices_train_source[int(len(random_indices_train_source)*var_sp.ALPHA):][:10])
     print(len(random_indices_train_source))
         
     print('Target pairs...')
-    print(random_indices_train_target)
+    #print(random_indices_train_target[:10])
     print(len(random_indices_train_target))
     
     source_len = len(random_indices_train_source)

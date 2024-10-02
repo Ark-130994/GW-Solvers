@@ -19,8 +19,7 @@ src/dataset_loaders-Copy1.py
 src/dataset_loaders.py
 src/train_old.py
 src/train-Copy1.py
-
-src/models/general_solvers.py
+src/train_with_entropic.py
 
 notebooks/*
 !notebooks/GWSolvers_discrete.ipynb

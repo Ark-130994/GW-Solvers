@@ -12,8 +12,6 @@ from src.solvers_discrete.FlowGW import FlowGW
 
 from ott.neural.networks.velocity_field import VelocityField
 
-from src.solvers_continuous.NeuralGW_entropic import NeuralGW_entropic
-
 from tqdm.auto import trange
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,7 +22,6 @@ from src.solvers_discrete.AlignGW import AlignGW
 from src.solvers_discrete.StructuredGW import StructuredGW
 from src.solvers_discrete.FlowGW import FlowGW
 
-from src.solvers_discrete.DiscreteSolver import DiscreteSolver
 from sklearn.neural_network import MLPRegressor
 
 from ott.neural.networks.velocity_field import VelocityField

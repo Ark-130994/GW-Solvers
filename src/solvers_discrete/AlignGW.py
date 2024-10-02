@@ -20,7 +20,6 @@ from ot.gromov import gwggrad, gwloss
 from src.models.general_solvers import sinkhorn_knopp
 
 
-
 def report_wandb_fn(metrics_dict, metrics_names, epoch, prefix):
     for metric_name in metrics_names:
         wandb.log({f'{prefix}/{metric_name}':metrics_dict[metric_name][-1]}, step=epoch)

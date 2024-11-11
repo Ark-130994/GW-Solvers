@@ -117,7 +117,7 @@ def update_geometry(X, Y, M, geom_epsilon, geom_batch_size,):
     return PointCloud(x=z_x, y=z_y, epsilon=geom_epsilon, batch_size=geom_batch_size, cost_fn=cost_fn)
 
 class StructuredGW():
-    def __init__(self, M_init, method_M, eps=1e-4, tol=1e-3, toy_type=None):
+    def __init__(self, M_init, method_M, eps=1e-4, tol=1e-3, toy_type=False):
         self.M_init = M_init
         self.method_M = 'exact'
         self.eps = eps
@@ -179,7 +179,7 @@ class StructuredGW():
             init_dual_a, init_dual_b = solver_state.f, solver_state.g  
             coupling_matrix = solver_state.matrix
 
-            if it % report_every == 0 or it == maxiter-1:
+            if (it % report_every == 0 and it != 0) or it == maxiter-1:
                 #y_sampled1 = (coupling_matrix @ Y) / coupling_matrix.sum(axis=1, keepdims=True)
                 #y_sampled1 = torch.tensor(np.asarray(y_sampled1)).to(torch.float32)
                 
@@ -191,12 +191,12 @@ class StructuredGW():
                 
                 continuous_solver = MLPRegressor(hidden_layer_sizes=256, random_state=1, max_iter=500)
                 
-                if self.toy_type is None:
+                if self.toy_type is False:
                     if wandb_report:
                         y_sampled_train = entropic_pred(x_train.cpu().numpy(), y_train.cpu().numpy(), M, solver_state.g, b, self.eps)
                         y_sampled_train = torch.tensor(np.asarray(y_sampled_train)).to(torch.float32)
                         metrics_dict_train = compute_metrics(x_train.cpu(), y_train.cpu(), y_sampled_train.cpu(), labels_train.cpu(), target_vectors, metrics_dict_train)
-                        report_wandb_fn(metrics_dict, metric_names, it, 'train')
+                        report_wandb_fn(metrics_dict_train, metric_names, it, 'train')
 
                         continuous_solver.fit(x_train.cpu().numpy(), y_sampled_train.cpu().numpy())
                         y_sampled_test = continuous_solver.predict(x_test.cpu().numpy())
@@ -218,6 +218,8 @@ class StructuredGW():
                         ax = fig.add_subplot(projection=None)
                         
                     ax.scatter(*y_sampled_np.T, c=labels_train.cpu().numpy(),  cmap="Spectral")
+                    ax.set_title('StructuredGW')
+                    
                     plt.show()
 
 
@@ -236,16 +238,23 @@ class StructuredGW():
         self.g = g
         self.b = b
         
-    def valid_step(self, sampler, n_samples, metric_names, target_vectors, n_eval):
+    def valid_step(self, sampler_source, sampler_target, n_samples, metric_names, target_vectors, n_eval):
             
         metrics_dict = {metric_name:[] for metric_name in metric_names}
         
         with torch.no_grad():
         
-            sampler.reset_sampler()
+            sampler_source.reset_sampler()
 
             for _ in trange(n_eval, leave=False, desc="Evaluation"):
-                x, y, labels = sampler.sample(n_samples)
+                
+                if sampler_target is None:
+                    x, y, labels = sampler_source.sample(n_samples)
+                else:
+                    sampler_target.reset_sampler()
+                    x, labels = sampler_source.sample(n_samples)
+                    y, _      = sampler_target.sample(n_samples)
+                    
                 x, y, labels = x.cpu(), y.cpu(), labels.cpu()
                 y_sampled = self.continuous_solver.predict(x.numpy())
 

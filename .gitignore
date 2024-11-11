@@ -3,6 +3,8 @@ notebooks/wandb/
 notebooks/results_continuous/
 notebooks/results_discrete/
 notebooks/results_toy
+notebooks/results_discrete_final/
+notebooks/results_continuous_final/
 
 src/solvers_discrete/*
 !src/solvers_discrete/AlignGW.py
@@ -16,14 +18,20 @@ src/solvers_continuous/*
 !src/solvers_continuous/FlowGW_mb.py
 
 src/dataset_loaders-Copy1.py
-src/dataset_loaders.py
+src/dataset_loaders_new.py
+src/dataset_loaders_old_old.py
 src/train_old.py
 src/train-Copy1.py
 src/train_with_entropic.py
+src/train_old_old.py
+src/metrics_old.py
 
 notebooks/*
 !notebooks/GWSolvers_discrete.ipynb
 !notebooks/GWSolvers_continuous.ipynb
+!notebooks/GWSolvers_continuous_toy.ipynb
+!notebooks/GWSolvers_discrete_toy.ipynb
+!notebooks/Get_embeddings.ipynb
 
 *.ipynb_checkpoints
 *__pycache__

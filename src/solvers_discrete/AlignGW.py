@@ -27,7 +27,7 @@ def report_wandb_fn(metrics_dict, metrics_names, epoch, prefix):
 
 class AlignGW():
 
-    def __init__(self, metric, normalize_dists, loss_fun, eps, tol, toy_type=None):
+    def __init__(self, metric, normalize_dists, loss_fun, eps, tol, toy_type=False):
         
         self.metric = metric
         self.normalize_dists = normalize_dists
@@ -118,12 +118,10 @@ class AlignGW():
         T = np.outer(p, q)  
         
         constC, hCx, hCy = self.init_matrix(Cx, Cy, T, p, q, self.loss_fun)
-        
         err = 1
         metrics_dict_train = {metric_name:[] for metric_name in metric_names}
         metrics_dict_test = {metric_name:[] for metric_name in metric_names}
-        #print(self.eps)
-        #while (err > self.tol and it <= maxiter):
+
         for it in tqdm(range(maxiter)):
             
             Tprev = T
@@ -141,15 +139,13 @@ class AlignGW():
                 
             if (it) % report_every == 0 or it == maxiter-1:
                 
-                #dist = gwloss(constC, hCx, hCy, T)
-              
                 err = np.linalg.norm(T - Tprev)
                 if err < self.tol:
                     print(f'Converged after {it}...')
                     
                 continuous_solver = MLPRegressor(hidden_layer_sizes=256, random_state=1, max_iter=500)
                 
-                if self.toy_type is None:
+                if self.toy_type is False:
 
                     if wandb_report:
                         y_sampled_train_np = (T @ y_train_np)/T.sum(axis=1, keepdims=True)
@@ -167,7 +163,7 @@ class AlignGW():
                     
                     y_sampled_np = (T @ y_train_np)/T.sum(axis=1, keepdims=True)
                 
-                    fig = plt.figure(figsize=(8, 8))
+                    fig = plt.figure(figsize=(6, 6))
                     
                     if self.toy_type == 'toy_2d_3d':
                         ax = fig.add_subplot(projection='3d')
@@ -175,7 +171,9 @@ class AlignGW():
                     if self.toy_type == 'toy_3d_2d':
                         ax = fig.add_subplot(projection=None)
                         
-                    ax.scatter(*y_sampled_np.T, c=labels_train.cpu().numpy(),  cmap="Spectral")
+                    ax.scatter(*y_sampled_np.T, c=labels_train.cpu().numpy(),  cmap="Spectral", alpha=.8)
+                    ax.set_title('AlignGW')
+                    
                     plt.show()
             
         return T, continuous_solver
@@ -189,16 +187,23 @@ class AlignGW():
         self.coupling = coupling
         self.continuous_solver = continuous_solver
     
-    def valid_step(self, sampler, n_samples, metric_names, target_vectors, n_eval):
+    def valid_step(self, sampler_source, sampler_target, n_samples, metric_names, target_vectors, n_eval):
             
         metrics_dict = {metric_name:[] for metric_name in metric_names}
         
         with torch.no_grad():
         
-            sampler.reset_sampler()
+            sampler_source.reset_sampler()
 
             for _ in trange(n_eval, leave=False, desc="Evaluation"):
-                x, y, labels = sampler.sample(n_samples)
+                
+                if sampler_target is None:
+                    x, y, labels = sampler_source.sample(n_samples)
+                else:
+                    sampler_target.reset_sampler()
+                    x, labels = sampler_source.sample(n_samples)
+                    y, _      = sampler_target.sample(n_samples)
+                    
                 x, y, labels = x.cpu(), y.cpu(), labels.cpu()
                 y_sampled = self.continuous_solver.predict(x.numpy())
 

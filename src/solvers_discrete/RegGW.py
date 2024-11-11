@@ -27,6 +27,7 @@ from ott.tools import sinkhorn_divergence
 from ott import utils
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
 
 def report_wandb_fn(metrics_dict, metrics_names, epoch, prefix):
     for metric_name in metrics_names:
@@ -105,7 +106,7 @@ def regularizer(
     return loss
 
 class RegGW:
-    def __init__(self, mover_model, mover_optimizer, source_dim, cost_fn, eps_fit=0.01, eps_reg=0.001, lamb=1):
+    def __init__(self, mover_model, mover_optimizer, source_dim, cost_fn, eps_fit=0.01, eps_reg=0.001, lamb=1, toy_type=False):
         self.mover_model = mover_model
         self.mover_optimizer = mover_optimizer
 
@@ -114,6 +115,7 @@ class RegGW:
 
         self.lamb = lamb
         self.cost_fn = cost_fn
+        self.toy_type = toy_type
 
         rng = jax.random.PRNGKey(0)
         self.state_neural_net = self.mover_model.create_train_state(rng, self.mover_optimizer, source_dim)
@@ -131,8 +133,8 @@ class RegGW:
             x_test_jnp = np.asarray(x_test.cpu().numpy())
             x_test_jnp = jtu.tree_map(jnp.asarray, x_test_jnp)
 
-        source_dim = x_test.shape[1]
-        target_dim = y_test.shape[1]
+        source_dim = x_train.shape[1]
+        target_dim = y_train.shape[1]
 
         metric_names = ['Top@1', 'Top@5', 'Top@10', 'cossim_gt', 'inner_gw', 'foscttm']
 
@@ -143,25 +145,42 @@ class RegGW:
 
         for it in tqdm(range(maxiters)):
             self.state_neural_net, mover_loss = self.step_fn(self.state_neural_net, train_batch, self.cost_fn, eps_fit=self.eps_fit, eps_reg=self.eps_reg, lamb=self.lamb)
-            
-            if ((it) % report_every == 0 ) or it == maxiters-1:
 
-                if wandb_report:
-                    y_sampled = np.asarray(self.state_neural_net.apply_fn({"params":self.state_neural_net.params}, x_train_jnp))
-                    y_sampled_test = np.asarray(self.state_neural_net.apply_fn({"params":self.state_neural_net.params}, x_test_jnp))          
-                    y_sampled = torch.tensor(y_sampled).to(torch.float32)
-                    y_sampled_test = torch.tensor(y_sampled_test).to(torch.float32)
-                    
-                    metrics_dict_train = compute_metrics(x_train, y_train, y_sampled, labels_train.cpu(), target_vectors.cpu(), metrics_dict_train)
-                    report_wandb_fn(metrics_dict_train, metric_names, it, 'train')
+            if self.toy_type is False:
+                if ((it) % report_every == 0 ) or it == maxiters-1:
+    
+                    if wandb_report:
+                        y_sampled = np.asarray(self.state_neural_net.apply_fn({"params":self.state_neural_net.params}, x_train_jnp))
+                        y_sampled_test = np.asarray(self.state_neural_net.apply_fn({"params":self.state_neural_net.params}, x_test_jnp))          
+                        y_sampled = torch.tensor(y_sampled).to(torch.float32)
+                        y_sampled_test = torch.tensor(y_sampled_test).to(torch.float32)
                         
-                    metrics_dict_test = compute_metrics(x_test, y_test, y_sampled_test, labels_test.cpu(), target_vectors.cpu(), metrics_dict_test)
-                    report_wandb_fn(metrics_dict_test, metric_names, it, 'test')
-                    
-                    #loss_metrics = {"train/mover_loss": np.asarray(mover_loss),
-                    #                "train/step": epoch}
-    #
-                    #wandb.log(loss_metrics)
+                        metrics_dict_train = compute_metrics(x_train, y_train, y_sampled, labels_train.cpu(), target_vectors.cpu(), metrics_dict_train)
+                        report_wandb_fn(metrics_dict_train, metric_names, it, 'train')
+                            
+                        metrics_dict_test = compute_metrics(x_test, y_test, y_sampled_test, labels_test.cpu(), target_vectors.cpu(), metrics_dict_test)
+                        report_wandb_fn(metrics_dict_test, metric_names, it, 'test')
+                        
+                        #loss_metrics = {"train/mover_loss": np.asarray(mover_loss),
+                        #                "train/step": epoch}
+        #
+                        #wandb.log(loss_metrics)
+            else:
+                if ((it) % report_every == 0 ) or it == maxiters-1:
+                     y_sampled_np = self.state_neural_net.apply_fn({"params":self.state_neural_net.params}, x_train_jnp)
+                     y_sampled_np = np.asarray(y_sampled_np)
+                
+                     fig = plt.figure(figsize=(8, 8))
+                     
+                     if self.toy_type == 'toy_2d_3d':
+                         ax = fig.add_subplot(projection='3d')
+                        
+                     if self.toy_type == 'toy_3d_2d':
+                         ax = fig.add_subplot(projection=None)
+                         
+                     ax.scatter(*y_sampled_np.T, c=labels_train.cpu().numpy(),  cmap="Spectral")
+                     ax.set_title('FlowGW')
+                     plt.show()
 
     def fit(self, x_dict, y_dict, labels_dict, target_vectors, wandb_report=False, max_iters=200, report_every=10):
         
@@ -171,16 +190,28 @@ class RegGW:
         
         self.model = model
         
-    def valid_step(self, sampler, n_samples, metric_names, target_vectors, n_eval):
+    def valid_step(self, sampler_source, sampler_target, n_samples, metric_names, target_vectors, n_eval):
+            
         metrics_dict = {metric_name:[] for metric_name in metric_names}
         
-        for _ in trange(n_eval, leave=False, desc="Evaluation"):
-            x, y, labels = sampler.sample(n_samples)
-            x_jnp = jnp.array(x.cpu().numpy())
-            y_sampled = self.state_neural_net.apply_fn({"params":self.state_neural_net.params}, x_jnp)
+        with torch.no_grad():
+        
+            sampler_source.reset_sampler()
+            sampler_target.reset_sampler()
+
+            for _ in trange(n_eval, leave=False, desc="Evaluation"):
+                
+                if sampler_target is None:
+                    x, y, labels = sampler_source.sample(n_samples)
+                else:
+                    x, labels = sampler_source.sample(n_samples)
+                    y         = sampler_target.sample(n_samples)
                     
-            y_sampled = torch.tensor(np.asarray(y_sampled)).to(torch.float32)
-                    
-            metrics_dict = compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict)
+                x_jnp = jnp.array(x.cpu().numpy())
+                y_sampled = self.state_neural_net.apply_fn({"params":self.state_neural_net.params}, x_jnp)
+                        
+                y_sampled = torch.tensor(np.asarray(y_sampled)).to(torch.float32)
+                        
+                metrics_dict = compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict)
             
         return metrics_dict

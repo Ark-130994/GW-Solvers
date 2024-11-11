@@ -100,7 +100,7 @@ def regularizer(
     return loss
 
 class RegGW_mb:
-    def __init__(self, mover_model, mover_optimizer, source_dim, cost_fn, eps_fit=0.01, eps_reg=0.001, lamb=1):
+    def __init__(self, mover_model, mover_optimizer, source_dim, cost_fn, eps_fit=0.01, eps_reg=0.001, lamb=1, rng_seed=0, toy_type=False):
         self.mover_model = mover_model
         self.mover_optimizer = mover_optimizer
 
@@ -115,10 +115,27 @@ class RegGW_mb:
 
         self.step_fn = _get_step_fn()
 
-    def train_epoch(self, sampler, n_samples, n_epochs, epoch, wandb_report):
+    def train_epoch_toy(self, source_sampler,  target_sampler, n_samples, n_epochs, epoch, wandb_report):
+        x_train = source_sampler.sample((n_samples,))
+        y_train = target_sampler.sample((n_samples,))
         
-        x_train, y_train, _ = sampler.sample(n_samples)
-            
+        x_train_jnp, y_train_jnp = jnp.array(x_train.cpu().numpy()), jnp.array(y_train.cpu().numpy())
+        x_train_jnp, y_train_jnp = jtu.tree_map(jnp.asarray, x_train_jnp), jtu.tree_map(jnp.asarray, y_train_jnp)
+                    
+        train_batch = {'source': x_train_jnp, 'target':y_train_jnp}
+                    
+        self.state_neural_net, mover_loss = self.step_fn(self.state_neural_net, train_batch, self.cost_fn, eps_fit=self.eps_fit, eps_reg=self.eps_reg, lamb=self.lamb)
+
+        if wandb_report:
+            loss_metrics = {"train/mover_loss": np.asarray(mover_loss),
+                            "train/step": epoch}
+
+            wandb.log(loss_metrics)
+    def train_epoch(self, sampler_source, sampler_target, n_samples, n_epochs, epoch, wandb_report):
+        
+        x_train, _ = sampler_source.sample(n_samples)
+        y_train, _ = sampler_target.sample(n_samples)
+        
         x_train_jnp, y_train_jnp = jnp.array(x_train.cpu().numpy()), jnp.array(y_train.cpu().numpy())
         x_train_jnp, y_train_jnp = jtu.tree_map(jnp.asarray, x_train_jnp), jtu.tree_map(jnp.asarray, y_train_jnp)
                     
@@ -132,16 +149,27 @@ class RegGW_mb:
 
             wandb.log(loss_metrics)
 
-    def valid_step(self, sampler, n_samples, metric_names, target_vectors, n_eval):
+    def valid_step(self, sampler_source, sampler_target, n_samples, metric_names, target_vectors, n_eval):
         metrics_dict = {metric_name:[] for metric_name in metric_names}
         
-        for _ in trange(n_eval, leave=False, desc="Evaluation"):
-            x, y, labels = sampler.sample(n_samples)
-            x_jnp = jnp.array(x.cpu().numpy())
-            y_sampled = self.state_neural_net.apply_fn({"params":self.state_neural_net.params}, x_jnp)
+        sampler_source.reset_sampler()
+
+        with torch.no_grad():
+        
+            for _ in trange(n_eval, leave=False, desc="Evaluation"):
                     
-            y_sampled = torch.tensor(np.asarray(y_sampled)).to(torch.float32)
+                if sampler_target is None:
+                    x, y, labels = sampler_source.sample(n_samples)
+                else:
+                    sampler_target.reset_sampler()
+                    x, labels = sampler_source.sample(n_samples)
+                    y, _      = sampler_target.sample(n_samples)
                     
-            metrics_dict = compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict)
+                x_jnp = jnp.array(x.cpu().numpy())
+                y_sampled = self.state_neural_net.apply_fn({"params":self.state_neural_net.params}, x_jnp)
+                        
+                y_sampled = torch.tensor(np.asarray(y_sampled)).to(torch.float32)
+                        
+                metrics_dict = compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict)
             
         return metrics_dict

@@ -263,26 +263,38 @@ class FlowGW_mb:
                                seed=seed
                               )
 
-    def train_epoch(self, sampler, n_samples, n_iters, epoch, wandb_report):
+    def train_epoch(self, sampler_source, sampler_target, n_samples, n_iters, epoch, wandb_report):
         
-        x_train, y_train, labels_train = sampler.sample(n_samples)   
+        x_train, _ = sampler_source.sample(n_samples)
+        y_train, _ = sampler_target.sample(n_samples)   
         x_train_jnp, y_train_jnp = np.asarray(x_train.cpu().numpy()), np.asarray(y_train.cpu().numpy())
         x_train_jnp, y_train_jnp = jtu.tree_map(jnp.asarray, x_train_jnp), jtu.tree_map(jnp.asarray, y_train_jnp)
 
         self.genot_fgw(x_train_jnp, y_train_jnp)
         
-    def valid_step(self, sampler, n_samples, metric_names, target_vectors, n_eval):
+    def valid_step(self, sampler_source, sampler_target, n_samples, metric_names, target_vectors, n_eval):
             
         metrics_dict = {metric_name:[] for metric_name in metric_names}
+
+        with torch.no_grad():
         
-        for _ in trange(n_eval, leave=False, desc="Evaluation"):
-            x, y, labels = sampler.sample(n_samples)
-            x_jnp = jnp.array(x.cpu().numpy())
-            y_sampled = self.genot_fgw.transport(x_jnp)
+            sampler_source.reset_sampler()
+            
+            for _ in trange(n_eval, leave=False, desc="Evaluation"):
                     
-            y_sampled = torch.tensor(np.asarray(y_sampled)).to(torch.float32)
+                if sampler_target is None:
+                    x, y, labels = sampler_source.sample(n_samples)
+                else:
+                    sampler_target.reset_sampler()
+                    x, labels = sampler_source.sample(n_samples)
+                    y, _      = sampler_target.sample(n_samples)
                     
-            metrics_dict = compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict)
+                x_jnp = jnp.array(x.cpu().numpy())
+                y_sampled = self.genot_fgw.transport(x_jnp)
+                        
+                y_sampled = torch.tensor(np.asarray(y_sampled)).to(torch.float32)
+                        
+                metrics_dict = compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict)
             
         return metrics_dict
 

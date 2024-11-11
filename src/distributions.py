@@ -162,8 +162,12 @@ class DiscreteMixture(CompositeDistribution):
         self.probs.to(device)
 
     def sample_with_labels(self, sample_shape: _size = ()):
+        #print(sample_shape)
+        sample_shape = (sample_shape,)
         sample_shape = to_size(sample_shape)
-
+        #print(sample_shape)
+        
+        
         indices = torch.multinomial(self.probs, sample_shape.numel(),
                                     replacement=True)
         samples = torch.empty(sample_shape.numel(), *self.event_shape,

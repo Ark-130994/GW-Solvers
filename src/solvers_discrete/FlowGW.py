@@ -46,13 +46,6 @@ from src.metrics import compute_metrics
 import matplotlib.pyplot as plt
 
 
-#def report_wandb_fn(metrics_dict, metrics_names, epoch):
-#
-#    for key in metrics_dict.keys():
-#        for metric_name in metrics_names:
-#            wandb.log({f'{key}/{metric_name}':metrics_dict[key][-1][metric_name]['mean'],
-#                       f'{key}/repeat':epoch})
-
 def report_wandb_fn(metrics_dict, metrics_names, epoch, prefix):
     for metric_name in metrics_names:
         wandb.log({f'{prefix}/{metric_name}':metrics_dict[metric_name][-1]}, step=epoch)
@@ -73,7 +66,7 @@ def sample_conditional_indices(rng: jax.Array, tmat: jnp.ndarray, *, k_samples_p
           in_axes=[0, 0],
       )(rngs, tmat)  # (m, k)
     
-      src_ixs = jnp.repeat(indices[:, None], k_samples_per_x, axis=1)  # (n, k)
+      src_ixs = jnp.repeat(indices[:, None], k_samples_per_x, axis=1) 
       return src_ixs, tgt_ixs
     
 def _multivariate_normal(rng: jax.Array, shape: Tuple[int, ...], dim: int, mean: float = 0.0, cov: float = 1.0) -> jnp.ndarray:
@@ -254,27 +247,32 @@ class GENOT:
 class FlowGW:
     
     def __init__(self, eps, embed_dim, n_freq, n_layers, cost_fn, lr, toy_type=None):
-        self.eps = eps
+        self.eps       = eps
         self.embed_dim = embed_dim
-        self.n_freq = n_freq
-        self.n_layers = n_layers
-        self.cost_fn = cost_fn
-        self.toy_type = toy_type
-        self.lr = lr
-        
-    def solve(self, x_dict, y_dict, labels_dict, target_vectors, fused_dim=0, wandb_report=False, maxiters=200, report_every=20):
+        self.n_freq    = n_freq
+        self.n_layers  = n_layers
+        self.cost_fn   = cost_fn
+        self.toy_type  = toy_type
+        self.lr        = lr
+
+    def solve(self, x_dict, y_dict, labels_dict, target_vectors, wandb_report=False, maxiters=200, report_every=20):
+    #def solve(self, x_dict, y_dict, labels_dict, target_vectors, fused_dim=0, wandb_report=False, maxiters=200, report_every=20):
 
         x_train, y_train, labels_train = x_dict['train'], y_dict['train'], labels_dict['train']
-        x_train_jnp, y_train_jnp = np.asarray(x_train.cpu().numpy()), np.asarray(y_train.cpu().numpy())
-        x_train_jnp, y_train_jnp = jtu.tree_map(jnp.asarray, x_train_jnp), jtu.tree_map(jnp.asarray, y_train_jnp)
-        x_test, y_test, labels_test = x_dict['test'], y_dict['test'], labels_dict['test']
+        x_train_jnp, y_train_jnp       = np.asarray(x_train.cpu().numpy()), np.asarray(y_train.cpu().numpy())
+        x_train_jnp, y_train_jnp       = jtu.tree_map(jnp.asarray, x_train_jnp), jtu.tree_map(jnp.asarray, y_train_jnp)
+        
+        x_test, y_test, labels_test    = x_dict['test'], y_dict['test'], labels_dict['test']
+        if x_test != None:
+            x_test_jnp                     = np.asarray(x_test.cpu().numpy())
+            x_test_jnp                     = jtu.tree_map(jnp.asarray, x_test_jnp)
 
-        if x_test is not None:
-            x_test_jnp = np.asarray(x_test.cpu().numpy())
-            x_test_jnp = jtu.tree_map(jnp.asarray, x_test_jnp)
+        else:
+            x_test_jnp = None
+            y_test_jnp = None
 
-        source_dim = x_test.shape[1]
-        target_dim = y_test.shape[1]
+        source_dim = x_train.shape[1]
+        target_dim = y_train.shape[1]
 
         metric_names = ['Top@1', 'Top@5', 'Top@10', 'cossim_gt', 'inner_gw', 'foscttm']
 
@@ -300,8 +298,8 @@ class FlowGW:
                     output_dim=target_dim,
                     cost_fn=self.cost_fn,
                     lr=self.lr,
-                    fused_dim=fused_dim,
-                    fused_penalty=(1.0-0.3)/0.3,
+                    fused_dim=0,
+                    #fused_penalty=(1.0-0.3)/0.3,
                     iterations=maxiters,
                     k_latent_per_x=1,
         )
@@ -314,8 +312,8 @@ class FlowGW:
                 if self.toy_type is None:
 
                     if wandb_report:
-                        y_sampled = np.asarray(genot_fgw.transport(x_train_jnp, rng=jax.random.PRNGKey(0)))#[0][0, ...])
-                        y_sampled_test = np.asarray(genot_fgw.transport(x_test_jnp, rng=jax.random.PRNGKey(0)))#[0][0, ...])
+                        y_sampled = np.asarray(genot_fgw.transport(x_train_jnp, rng=jax.random.PRNGKey(0)))
+                        y_sampled_test = np.asarray(genot_fgw.transport(x_test_jnp, rng=jax.random.PRNGKey(0)))
                         
                         y_sampled = torch.tensor(y_sampled).to(torch.float32)
                         y_sampled_test = torch.tensor(y_sampled_test).to(torch.float32)
@@ -341,33 +339,41 @@ class FlowGW:
                     if self.toy_type == 'toy_3d_2d':
                         ax = fig.add_subplot(projection=None)
                         
-                    ax.scatter(*y_sampled_np.T, c=labels_train.cpu().numpy(),  cmap="Spectral")
+                    ax.scatter(*y_sampled_np.T, c=labels_train.cpu().numpy(),  cmap="Spectral", alpha=0.8)
+                    ax.set_title('FlowGW')
                     plt.show()
                     
         return genot_fgw
 
-    def fit(self, x_dict, y_dict, labels_dict, target_vectors, fused_dim=0, wandb_report=False, max_iters=200, report_every=10):
+    def fit(self, x_dict, y_dict, labels_dict, target_vectors, wandb_report=False, max_iters=200, report_every=10):
         
         self.x_dict, self.y_dict, self.labels_dict = x_dict, y_dict, labels_dict
         
-        model = self.solve(self.x_dict, self.y_dict, self.labels_dict, target_vectors, fused_dim, wandb_report, max_iters, report_every)
+        model = self.solve(self.x_dict, self.y_dict, self.labels_dict, target_vectors, wandb_report, max_iters, report_every)
         
         self.model = model
         
-    def valid_step(self, sampler, n_samples, metric_names, target_vectors, n_eval):
+    def valid_step(self, sampler_source, sampler_target, n_samples, metric_names, target_vectors, n_eval):
             
         metrics_dict = {metric_name:[] for metric_name in metric_names}
         
         with torch.no_grad():
         
-            sampler.reset_sampler()
+            sampler_source.reset_sampler()
 
             for _ in trange(n_eval, leave=False, desc="Evaluation"):
-                x, y, labels = sampler.sample(n_samples)
+                
+                if sampler_target is None:
+                    x, y, labels = sampler_source.sample(n_samples)
+                else:
+                    sampler_target.reset_sampler()
+                    x, labels = sampler_source.sample(n_samples)
+                    y, _      = sampler_target.sample(n_samples)
+                    
                 x, y, labels = x.cpu(), y.cpu(), labels.cpu()
-                x_jnp = np.asarray(x.numpy())
-                y_sampled = self.model.transport(x_jnp)
-                y_sampled = torch.tensor(np.asarray(y_sampled)).to(torch.float32)
+                x_jnp        = np.asarray(x.numpy())
+                y_sampled    = self.model.transport(x_jnp)
+                y_sampled    = torch.tensor(np.asarray(y_sampled)).to(torch.float32)
 
                 metrics_dict = compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict)
             

@@ -66,13 +66,20 @@ class CostModel(InnerGW_base):
         super().__init__()
 
         self.scale = np.sqrt(min(p, q))
-        M = np.sqrt(p * q)
-        self.A = CustomLinear(p, q, bias=False, weight_init=weight_init, clipping_value=M).to(device)
+        self.clipping_value = None#np.sqrt(p * q)
+        self.A = CustomLinear(p, q, bias=False, weight_init=weight_init, clipping_value=self.clipping_value).to(device)
         
         #geotorch.sphere(self.P, "weight")
 
     def forward(self, x, y):
+        
+        if self.clipping_value is not None:
+            w = self.A.weight.data
+            w = w.clamp(-self.clipping_value/2, self.clipping_value/2)
+            self.A.weight.data = w
+            
         out = -4*torch.norm(x, dim=-1)**2 * torch.norm(y, dim=-1)**2 - 32 * self.A(x) @ y.T
+        
         return out
 
     @property

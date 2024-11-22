@@ -152,7 +152,6 @@ class RegGW_mb:
     def valid_step(self, sampler_source, sampler_target, n_samples, metric_names, target_vectors, n_eval):
         metrics_dict = {metric_name:[] for metric_name in metric_names}
         
-        sampler_source.reset_sampler()
 
         with torch.no_grad():
         
@@ -161,7 +160,6 @@ class RegGW_mb:
                 if sampler_target is None:
                     x, y, labels = sampler_source.sample(n_samples)
                 else:
-                    sampler_target.reset_sampler()
                     x, labels = sampler_source.sample(n_samples)
                     y, _      = sampler_target.sample(n_samples)
                     

@@ -21,6 +21,7 @@ from flax.core import frozen_dict
 from flax.training import train_state
 from jax.nn import initializers
 import abc
+import torch.nn.functional as F
 
 __all__ = ["mlp"]
 
@@ -34,6 +35,19 @@ def mlp(input_size, output_size=1, *,
     for in_size, out_size in nwise(layer_sizes):
         modules.append(nn.LeakyReLU())
         modules.append(nn.Dropout(.1))
+        modules.append(nn.Linear(in_size, out_size))
+
+    return nn.Sequential(*modules)
+
+
+def fcnn(input_size, output_size=1, *,
+        hidden_sizes):
+    
+    layer_sizes = hidden_sizes + [output_size]
+    modules: list[nn.Module] = [nn.Linear(input_size, layer_sizes[0])]
+
+    for in_size, out_size in nwise(layer_sizes):
+        modules.append(nn.LeakyReLU())
         modules.append(nn.Linear(in_size, out_size))
 
     return nn.Sequential(*modules)
@@ -257,4 +271,19 @@ class mlp_jax(ModelBase):
     z = Block(dims=self.hidden_dims, out_dim=self.out_dim, act_fn=self.act_fn)(z)
     return z
 
+class FCNN(nn.Module):
+    def __init__(self, dim_init, hidden_layer, dim_final):
+        super(generator_x_y, self).__init__()
         
+        self.lin1 = nn.Linear(dim_init, hidden_layer)
+        self.lin2 = nn.Linear(hidden_layer, hidden_layer)
+        self.lin3 = nn.Linear(hidden_layer, hidden_layer)
+        self.lin_end = nn.Linear(hidden_layer, dim_final)
+        
+    def forward(self, inp):
+        out = Fn.leaky_relu(self.lin1(inp))
+        out = Fn.leaky_relu(self.lin2(out))
+        out = Fn.leaky_relu(self.lin3(out))
+        out = self.lin_end(out)
+        
+        return out 

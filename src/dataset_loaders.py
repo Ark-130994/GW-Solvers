@@ -89,7 +89,6 @@ def load_vectors(data_path, config):
     SOURCE_DIM      = space_dataset.SOURCE_DIM
     TARGET_DIM      = space_dataset.TARGET_DIM
 
-    VS = space_dataset.VS
 
     if DATASET_NAME in ['muse_multi', 'muse']:
         SOURCE_LANG = space_dataset.SOURCE_LANG
@@ -97,13 +96,14 @@ def load_vectors(data_path, config):
     
     if DATASET_NAME in ['wiki-gigaword', 'twitter']:
         if EMB_TYPE_SOURCE == 'BP':
+            VS = space_dataset.VS
         
             data_path_source = f'../datasets/{DATASET_NAME}_{EMB_TYPE_SOURCE}_{SOURCE_DIM}_{VS//1000}K.d2v'
         else:
             data_path_source = f'../datasets/{DATASET_NAME}_{EMB_TYPE_SOURCE}_{SOURCE_DIM}.d2v'
             
         if EMB_TYPE_TARGET == 'BP':
-        
+            VS = space_dataset.VS
             data_path_target = f'../datasets/{DATASET_NAME}_{EMB_TYPE_TARGET}_{TARGET_DIM}_{VS//1000}K.d2v'
 
         else:
@@ -135,7 +135,12 @@ def load_vectors(data_path, config):
         
     if DATASET_NAME == 'muse_multi':
 
-        data_path = f'../datasets/muse_{SOURCE_LANG}({EMB_TYPE_SOURCE})({SOURCE_DIM})_{TARGET_LANG}({EMB_TYPE_TARGET})({TARGET_DIM})_{VS//1000}K.d2v'
+        if EMB_TYPE_SOURCE == 'BP':
+            VS = space_dataset.VS
+            data_path = f'../datasets/muse_{SOURCE_LANG}({EMB_TYPE_SOURCE})({SOURCE_DIM})_{TARGET_LANG}({EMB_TYPE_TARGET})({TARGET_DIM})_{VS//1000}K.d2v'
+        else:
+            data_path = f'../datasets/muse_{SOURCE_LANG}({EMB_TYPE_SOURCE})({SOURCE_DIM})_{TARGET_LANG}({EMB_TYPE_TARGET})({TARGET_DIM}).d2v'
+            
         source_target_model = KeyedVectors.load(data_path)
 
         source_model = KeyedVectors(vector_size=SOURCE_DIM)
@@ -211,6 +216,7 @@ def get_samplers(config, source_vectors, target_vectors):
     N_TEST_SAMPLES  = space_dataset.N_TEST_SAMPLES * N_EVAL
     ALPHA           = space_dataset.ALPHA
     DEVICE          = space_dataset.DEVICE
+    SHUFFLE         = space_dataset.SHUFFLE
 
     TRAIN_TYPE      = config['training']['TRAIN_TYPE']
 
@@ -269,8 +275,8 @@ def get_samplers(config, source_vectors, target_vectors):
     train_source_dataset = TensorDataset(source_vectors[indices_train_source], indices_train_source)
     train_target_dataset = TensorDataset(target_vectors[indices_train_target], indices_train_target)
 
-    train_source_loader = DataLoader(train_source_dataset, batch_size=batch_size_train, shuffle=True)
-    train_target_loader = DataLoader(train_target_dataset, batch_size=batch_size_train, shuffle=True)
+    train_source_loader = DataLoader(train_source_dataset, batch_size=batch_size_train, shuffle=SHUFFLE)
+    train_target_loader = DataLoader(train_target_dataset, batch_size=batch_size_train, shuffle=SHUFFLE)
     
     train_source_sampler = LoaderSamplerTrain(train_source_loader, device=DEVICE)
     train_target_sampler = LoaderSamplerTrain(train_target_loader, device=DEVICE)

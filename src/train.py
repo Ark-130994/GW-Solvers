@@ -1,14 +1,19 @@
 from types import SimpleNamespace 
 import torch
-from src.models.simple import mlp, mlp_jax
+from src.models.simple import mlp, mlp_jax, fcnn
 from src.models.costs import InnerGW_linear, CostModel
 from src.utils import pca_plot
 from src.solvers_continuous.NeuralGW import NeuralGW
+from src.solvers_continuous.EntropicGW import EntropicGW
+
+from src.solvers_continuous.CycleGW import CycleGW
+
 from src.solvers_continuous.RegGW_mb import RegGW_mb
 from src.solvers_continuous.FlowGW_mb import FlowGW_mb
 
 from src.solvers_discrete.RegGW import RegGW
 from src.solvers_discrete.FlowGW import FlowGW
+
 
 from ott.neural.networks.velocity_field import VelocityField
 
@@ -36,7 +41,8 @@ import jax.numpy as jnp
 from ott.neural.networks.layers import time_encoder
 
 from ott.geometry import costs
-
+import torch.nn as nn
+import torch.nn.functional as Fn
 import flax.linen as ln
 
 def report_wandb_fn(metrics_dict, metrics_names, epoch, fig):
@@ -47,13 +53,48 @@ def report_wandb_fn(metrics_dict, metrics_names, epoch, fig):
                        f'{key}/step':epoch})
     if fig is not None:     
         wandb.log({'test/Plot source->target' : [wandb.Image(fig2img(fig))], 'test/step':epoch})
+        
+class generator_x_y(nn.Module):
+    def __init__(self, dimension_x, hidden_layer, dimension_y):
+        super(generator_x_y, self).__init__()
+        
+        self.lin1 = nn.Linear(dimension_x, hidden_layer)
+        self.lin2 = nn.Linear(hidden_layer, hidden_layer)
+        self.lin3 = nn.Linear(hidden_layer, hidden_layer)
 
+        self.lin_end = nn.Linear(hidden_layer, dimension_y)
+        
+    def forward(self, input):
+        y = Fn.leaky_relu(self.lin1(input))
+        y = Fn.leaky_relu(self.lin2(y))
+        y = Fn.leaky_relu(self.lin3(y))
+        y = self.lin_end(y)
+        
+        return y
+
+class generator_y_x(nn.Module):
+    def __init__(self, dimension_x, hidden_layer, dimension_y):
+        super(generator_y_x, self).__init__()
+               
+        self.lin1 = nn.Linear(dimension_y, hidden_layer)
+        self.lin2 = nn.Linear(hidden_layer, hidden_layer)
+        self.lin3 = nn.Linear(hidden_layer, hidden_layer)
+
+        self.lin_end = nn.Linear(hidden_layer, dimension_x)
+        
+    def forward(self, input):
+        x = Fn.leaky_relu(self.lin1(input))
+        x = Fn.leaky_relu(self.lin2(x))
+        x = Fn.leaky_relu(self.lin3(x))
+        x = self.lin_end(x)
+        
+        return x
 def train_continuous(train_source_sampler, train_target_sampler, 
                      test_sampler, 
                      metrics_names, target_vectors,
                      config,
                      wandb_report=False,
-                     axis_lims=None, report_every=10):
+                     axis_lims=None, report_every=10, source_vectors=None):
     
     space_dataset     = SimpleNamespace(**config['dataset'])
     space_training    = SimpleNamespace(**config['training'])
@@ -113,9 +154,49 @@ def train_continuous(train_source_sampler, train_target_sampler,
         cost_fn     = costs.Cosine()
         eps         = space_model.EPS
         model_class = FlowGW_mb(mover_model, SOURCE_DIM, TARGET_DIM, eps, cost_fn, seed=SEED)
+
+    if METHOD_NAME == 'CycleGW':
+        F_model = fcnn(SOURCE_DIM, TARGET_DIM, hidden_sizes=space_model.HIDDEN_SIZES_MLP).to(DEVICE)#fcnn(SOURCE_DIM, hidden_dim=space_model.HIDDEN_SIZES_MLP).to(DEVICE)
+        G_model = fcnn(TARGET_DIM, SOURCE_DIM, hidden_sizes=space_model.HIDDEN_SIZES_MLP).to(DEVICE)
+
+        #F_model =  generator_x_y(SOURCE_DIM, space_model.HIDDEN_SIZES_MLP[0], TARGET_DIM).to(torch.float32).to(DEVICE)
+        #G_model =  generator_y_x(SOURCE_DIM, space_model.HIDDEN_SIZES_MLP[0], TARGET_DIM).to(torch.float32).to(DEVICE)
+        F_optimizer = torch.optim.Adam(F_model.parameters(), lr=space_model.F_LR)
+        G_optimizer = torch.optim.Adam(G_model.parameters(), lr=space_model.G_LR)
+    
+        models     = {'F_model':F_model, 'G_model':G_model}
+        optimizers = {'F_model':F_optimizer, 'G_model':G_optimizer}
+        n_iters     = None
+    
+        model_class = CycleGW(models, optimizers, space_model.EPS, space_model.SIGMAS, space_model.REG, space_model.KERNEL_TYPE, space_model.TAKE_MEDIAN)
+
+    if METHOD_NAME == 'EntropicGW':
+        critic_model = mlp(SOURCE_DIM, hidden_sizes=space_model.HIDDEN_SIZES_MLP).to(DEVICE)
+        critic_optimizer = torch.optim.Adam(critic_model.parameters(), lr=space_model.CRITIC_LR)
+
+        continuous_model = MLPRegressor(hidden_layer_sizes=256, random_state=1, max_iter=500)
         
-    report_keys = ['train', 'test'] 
-    metrics_dict = {key:[] for key in report_keys}
+        if space_model.COST_LR is not None:
+            cost_model   = InnerGW_linear(SOURCE_DIM, TARGET_DIM, device=DEVICE)
+            cost_optimizer   = torch.optim.Adam(cost_model.parameters(), lr=space_model.COST_LR)
+
+        else:
+            cost_model = None
+            cost_optimizer = None
+        
+        models     = {'critic':critic_model, 'cost':cost_model, 'continuous':continuous_model}
+        optimizers = {'critic':critic_optimizer, 'cost':cost_optimizer}
+        n_iters    = {'critic':space_model.CRITIC_ITERS, 'cost':space_model.COST_ITERS}
+    
+        model_class = EntropicGW(models, optimizers, space_model.EPS)
+
+    if METHOD_NAME != 'CycleGW':
+        report_keys = ['train', 'test'] 
+        metrics_dict = {key:[] for key in report_keys}
+        
+    else:
+        report_keys = ['train_F', 'train_G', 'test_F', 'test_G'] 
+        metrics_dict = {key:[] for key in report_keys}
     
     if wandb_report:
         for key in report_keys:
@@ -128,22 +209,34 @@ def train_continuous(train_source_sampler, train_target_sampler,
             model_class.train_epoch(train_source_sampler, train_target_sampler, BATCH_SIZE_TRAIN, n_iters, epoch, wandb_report)  
             
             if (epoch % report_every == 0 and epoch != 0) or epoch==space_training.N_EPOCHS-1:
-                
-                metrics_train_dict = model_class.valid_step(train_source_sampler, train_target_sampler, BATCH_SIZE_TRAIN, metrics_names, target_vectors, N_EVAL)
-                metrics_dict['train'].append({key1:{'mean':np.mean(metrics_train_dict[key1]), 
-                                                    'std':np.std(metrics_train_dict[key1])} for key1 in metrics_names})
-                
-                metrics_test_dict = model_class.valid_step(test_sampler, None, BATCH_SIZE_TEST, metrics_names, target_vectors, N_EVAL)
-                metrics_dict['test'].append({key1:{'mean':np.mean(metrics_test_dict[key1]), 
-                                                   'std':np.std(metrics_test_dict[key1])} for key1 in metrics_names})
+                if METHOD_NAME != 'CycleGW':
+                    metrics_train_dict = model_class.valid_step(train_source_sampler, train_target_sampler, BATCH_SIZE_TRAIN, metrics_names, target_vectors, N_EVAL)
+                    metrics_dict['train'].append({key1:{'mean':np.mean(metrics_train_dict[key1]), 
+                                                        'std':np.std(metrics_train_dict[key1])} for key1 in metrics_names})
                     
+                    metrics_test_dict = model_class.valid_step(test_sampler, None, BATCH_SIZE_TEST, metrics_names, target_vectors, N_EVAL)
+                    metrics_dict['test'].append({key1:{'mean':np.mean(metrics_test_dict[key1]), 
+                                                       'std':np.std(metrics_test_dict[key1])} for key1 in metrics_names})
+                else:
+                    metrics_train_dict_F,  metrics_train_dict_G = model_class.valid_step(train_source_sampler, train_target_sampler, BATCH_SIZE_TRAIN, metrics_names, source_vectors, target_vectors, N_EVAL)
+                    metrics_dict['train_F'].append({key1:{'mean':np.mean(metrics_train_dict_F[key1]), 
+                                                          'std':np.std(metrics_train_dict_F[key1])} for key1 in metrics_names})
+                    metrics_dict['train_G'].append({key1:{'mean':np.mean(metrics_train_dict_G[key1]), 
+                                                          'std':np.std(metrics_train_dict_G[key1])} for key1 in metrics_names})
+                    
+                    metrics_test_dict_F, metrics_test_dict_G = model_class.valid_step(test_sampler, None, BATCH_SIZE_TEST, metrics_names, source_vectors, target_vectors, N_EVAL)
+                    metrics_dict['test_F'].append({key1:{'mean':np.mean(metrics_test_dict_F[key1]), 
+                                                       'std':np.std(metrics_test_dict_F[key1])} for key1 in metrics_names})
+                    metrics_dict['test_G'].append({key1:{'mean':np.mean(metrics_test_dict_G[key1]), 
+                                                       'std':np.std(metrics_test_dict_G[key1])} for key1 in metrics_names})
                     
                 if wandb_report:
                     report_wandb_fn(metrics_dict, metrics_names, epoch, None)
                     
             plt.close()
             
-        metrics_dict_out = {'train':metrics_dict['train'][-1], 'test':metrics_dict['test'][-1]}    
+        metrics_dict_out = {'train_F':metrics_dict['train_F'][-1], 'test_F':metrics_dict['test_F'][-1],
+                            'train_G':metrics_dict['train_G'][-1], 'test_G':metrics_dict['test_G'][-1]}    
         
     except KeyboardInterrupt:
         print('Interrumpting by keyboard...')
@@ -399,20 +492,57 @@ def train_toy_continuous(source_sampler, target_sampler,
         eps = space_model.EPS
         model_class = FlowGW_mb(mover_model, SOURCE_DIM, TARGET_DIM, eps, cost_fn, seed=SEED)
 
+
+    if METHOD_NAME == 'CycleGW':
+        F_model = fcnn(SOURCE_DIM, TARGET_DIM, hidden_sizes=space_model.HIDDEN_SIZES_MLP).to(DEVICE)#fcnn(SOURCE_DIM, hidden_dim=space_model.HIDDEN_SIZES_MLP).to(DEVICE)
+        G_model = fcnn(TARGET_DIM, SOURCE_DIM, hidden_sizes=space_model.HIDDEN_SIZES_MLP).to(DEVICE)
+
+        #F_model =  generator_x_y(SOURCE_DIM, space_model.HIDDEN_SIZES_MLP[0], TARGET_DIM).to(torch.float32).to(DEVICE)
+        #G_model =  generator_y_x(SOURCE_DIM, space_model.HIDDEN_SIZES_MLP[0], TARGET_DIM).to(torch.float32).to(DEVICE)
+        F_optimizer = torch.optim.Adam(F_model.parameters(), lr=space_model.F_LR)
+        G_optimizer = torch.optim.Adam(G_model.parameters(), lr=space_model.G_LR)
+    
+        models     = {'F_model':F_model, 'G_model':G_model}
+        optimizers = {'F_model':F_optimizer, 'G_model':G_optimizer}
+        n_iters     = None
+    
+        model_class = CycleGW(models, optimizers, space_model.EPS, space_model.SIGMAS, space_model.REG, space_model.KERNEL_TYPE, space_model.TAKE_MEDIAN)
+
+    if METHOD_NAME == 'EntropicGW':
+        critic_model = mlp(SOURCE_DIM, hidden_sizes=space_model.HIDDEN_SIZES_MLP).to(DEVICE)
+        critic_optimizer = torch.optim.Adam(critic_model.parameters(), lr=space_model.CRITIC_LR)
+
+        continuous_model = MLPRegressor(hidden_layer_sizes=256, random_state=1, max_iter=500)
+        
+        if space_model.COST_LR is not None:
+            cost_model   = CostModel(SOURCE_DIM, TARGET_DIM).to(DEVICE)
+            cost_optimizer   = torch.optim.Adam(cost_model.parameters(), lr=space_model.COST_LR)
+
+        else:
+            cost_model = torch.eye(SOURCE_DIM, TARGET_DIM).to(DEVICE)
+            cost_optimizer = None
+        
+        models     = {'critic':critic_model, 'cost':cost_model, 'continuous':continuous_model}
+        optimizers = {'critic':critic_optimizer, 'cost':cost_optimizer}
+        n_iters    = {'critic':space_model.CRITIC_ITERS, 'cost':space_model.COST_ITERS}
+    
+        model_class = EntropicGW(models, optimizers, space_model.EPS)
+        
     with torch.no_grad():
         
-        x_plot, labels_plot = source_sampler.sample_with_labels(n_samples_plot)
+        x_plot, labels_x_plot = source_sampler.sample_with_labels(n_samples_plot)
         #Px_plot_init = x_plot @ cost.matrix
-        y_plot = target_sampler.sample(n_samples_plot)
+        y_plot, labels_y_plot = target_sampler.sample_with_labels(n_samples_plot)
         
     try:
         for epoch in trange(space_training.N_EPOCHS, leave=False, desc="Epoch"):
             
             P_trained = model_class.train_epoch_toy(source_sampler, target_sampler, BATCH_SIZE_TRAIN, n_iters, epoch, wandb_report=False)  
             
-            if epoch % report_every == 0:
-                mover_model_pred = model_class.mover_model
+            if epoch % report_every == 0 and epoch != 0:
                 if METHOD_NAME == 'NeuralGW':
+                    mover_model_pred = model_class.mover_model
+                    
                     mover_model_pred.eval()
                 
                     with torch.no_grad():
@@ -421,16 +551,59 @@ def train_toy_continuous(source_sampler, target_sampler,
                 if METHOD_NAME == 'RegGW':
                      y_sampled_np = model_class.state_neural_net.apply_fn({"params":model_class.state_neural_net.params}, x_plot)
                      y_sampled_np = np.asarray(y_sampled_np)
-                fig = plt.figure(figsize=(8, 8))
-                
-                if toy_type == 'toy_2d_3d':
-                    ax = fig.add_subplot(projection='3d')
-                   
-                if toy_type == 'toy_3d_2d':
-                    ax = fig.add_subplot(projection=None)
 
-                ax.scatter(*y_sampled_np.T, c=labels_plot.cpu().numpy(),  cmap="Spectral")
+                if METHOD_NAME == 'CycleGW':
+                    with torch.no_grad():
+                        y_sampled_F = model_class.F_model(x_plot).cpu().numpy()
+                        y_sampled_G = model_class.G_model(y_plot).cpu().numpy()
+
+                if METHOD_NAME == 'EntropicGW':
+                    with torch.no_grad():
+                        y_sampled = model_class.continuous_model.predict(x_plot.cpu().numpy())
+                
+                fig = plt.figure(figsize=(11, 11))
+
+                if toy_type == 'toy_3d_2d':
+                    ax1 = fig.add_subplot(2, 2, 1, projection='3d')
+                    ax2 = fig.add_subplot(2, 2, 2, projection=None)
+                    ax3 = fig.add_subplot(2, 2, 3, projection=None)
+                    ax4 = fig.add_subplot(2, 2, 4, projection='3d')
+            
+                ax1.scatter(*x_plot.cpu().T, c=labels_x_plot.cpu().numpy(), cmap="Spectral", alpha=.8)
+                ax1.set_title('Source distribution (X)', fontsize=14)
+
+                if METHOD_NAME == 'CycleGW': 
+                    ax2.scatter(*y_plot.cpu().T, c=labels_y_plot.cpu().numpy(), cmap="Spectral", alpha=.8)
+                    ax2.set_title('Target distribution (Y)', fontsize=14)
+                    
+                    ax3.scatter(*y_sampled_F.T, c=labels_x_plot.cpu().numpy(),  cmap="Spectral", alpha=.8)
+                    ax3.set_title('F(X)')
+            
+                    ax4.scatter(*y_sampled_G.T, c=labels_y_plot.cpu().numpy(),  cmap="Spectral", alpha=.8)
+                    ax4.set_title('G(Y)')
+                    
+                else:
+                    ax2.scatter(*y_plot.cpu().T, c='black', alpha=.8)
+                    ax2.set_title('Target distribution', fontsize=14)
+
+                    ax3.scatter(*y_sampled.T, c=labels_x_plot.cpu().numpy(),  cmap="Spectral", alpha=.8)
+                    ax3.set_title('Predicted samples')
+
+                    
+                 
+                 
+                 
                 plt.show()
+                #fig = plt.figure(figsize=(8, 8))
+                #
+                #if toy_type == 'toy_2d_3d':
+                #    ax = fig.add_subplot(projection='3d')
+                #   
+                #if toy_type == 'toy_3d_2d':
+                #    ax = fig.add_subplot(projection=None)
+#
+                #ax.scatter(*y_sampled_np.T, c=labels_plot.cpu().numpy(),  cmap="Spectral")
+                #plt.show()
                         
                     
             

@@ -16,6 +16,7 @@ src/solvers_continuous/*
 !src/solvers_continuous/NeuralGW.py
 !src/solvers_continuous/RegGW_mb.py
 !src/solvers_continuous/FlowGW_mb.py
+!src/solvers_continuous/CycleGW.py
 
 src/dataset_loaders-Copy1.py
 src/dataset_loaders_new.py
@@ -27,8 +28,8 @@ src/train_old_old.py
 src/metrics_old.py
 
 notebooks/*
-!notebooks/GWSolvers_discrete.ipynb
-!notebooks/GWSolvers_continuous.ipynb
+!notebooks/GWSolvers_discrete_final.ipynb
+!notebooks/GWSolvers_continuous_final.ipynb
 !notebooks/GWSolvers_continuous_toy.ipynb
 !notebooks/GWSolvers_discrete_toy.ipynb
 !notebooks/Get_embeddings.ipynb

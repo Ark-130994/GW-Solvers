@@ -141,15 +141,12 @@ class NeuralGW:
         metrics_dict = {metric_name:[] for metric_name in metric_names}
         
         with torch.no_grad():
-        
-            sampler_source.reset_sampler()
-            
+                    
             for _ in trange(n_eval, leave=False, desc="Evaluation"):
                 
                 if sampler_target is None:
                     x, y, labels = sampler_source.sample(n_samples)
                 else:
-                    sampler_target.reset_sampler()
                     x, labels = sampler_source.sample(n_samples)
                     y, _      = sampler_target.sample(n_samples)
                     

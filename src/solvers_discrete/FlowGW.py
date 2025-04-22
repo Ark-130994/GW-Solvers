@@ -41,7 +41,7 @@ import functools
 from ott.neural.networks.layers import time_encoder
 from ott.neural.networks.velocity_field import VelocityField
 from ott import utils
-from src.metrics import compute_metrics
+from src.metrics import compute_metrics_2
 
 import matplotlib.pyplot as plt
 
@@ -274,7 +274,9 @@ class FlowGW:
         source_dim = x_train.shape[1]
         target_dim = y_train.shape[1]
 
-        metric_names = ['Top@1', 'Top@5', 'Top@10', 'cossim_gt', 'inner_gw', 'foscttm']
+        #metric_names = ['Top@1', 'Top@5', 'Top@10', 'cossim_gt', 'inner_gw', 'foscttm']
+        metric_names = ['Top@1', 'Top@5', 'Top@10', 'cossim_gt', 'inner_gw', 'foscttm', 'distortion', 'mmd', 'bw_uvp', 'sinkhorn_divergence']
+        
 
         metrics_dict_train = {metric_name:[] for metric_name in metric_names}
         metrics_dict_test = {metric_name:[] for metric_name in metric_names}
@@ -314,14 +316,20 @@ class FlowGW:
                     if wandb_report:
                         y_sampled = np.asarray(genot_fgw.transport(x_train_jnp, rng=jax.random.PRNGKey(0)))
                         y_sampled_test = np.asarray(genot_fgw.transport(x_test_jnp, rng=jax.random.PRNGKey(0)))
+
+                        #print('y_sampled genot:', np.linalg.norm(y_sampled, axis=1).max())
+                        #print('y_train jnp:', np.linalg.norm(np.asarray(y_train_jnp), axis=1).max())
                         
                         y_sampled = torch.tensor(y_sampled).to(torch.float32)
                         y_sampled_test = torch.tensor(y_sampled_test).to(torch.float32)
+
+                        #print('before metric, y_train, y_sampled:', y_train.norm(dim=1).max(), y_sampled.norm(dim=1).max())
+                        #print('before metric, y_test, y_sampled_test:', y_test.norm(dim=1).max(), y_sampled_test.norm(dim=1).max())
                         
-                        metrics_dict_train = compute_metrics(x_train, y_train, y_sampled, labels_train.cpu(), target_vectors.cpu(), metrics_dict_train)
+                        metrics_dict_train = compute_metrics_2(x_train, y_train, y_sampled, labels_train.cpu(), target_vectors.cpu(), metrics_dict_train)
                         report_wandb_fn(metrics_dict_train, metric_names, it, 'train')
                         
-                        metrics_dict_test = compute_metrics(x_test, y_test, y_sampled_test, labels_test.cpu(), target_vectors.cpu(), metrics_dict_test)
+                        metrics_dict_test = compute_metrics_2(x_test, y_test, y_sampled_test, labels_test.cpu(), target_vectors.cpu(), metrics_dict_test)
                         report_wandb_fn(metrics_dict_test, metric_names, it, 'test')
                         
                     else:

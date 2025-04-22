@@ -125,13 +125,11 @@ def kernel_2(x, y, outer=False):
     return torch.einsum("...i,...i->...", x, y)
 
 @torch.no_grad()
-def bw_uvp(y_sampled, target_dict):
+def compute_bw_uvp(y_sampled, target_mean, target_cov):
     """
     Calculate the BW distance between an empirical distribution and a Gaussian.
     """
 
-    target_cov = target_dict['cov']
-    target_mean = target_dict['mean']
     
     moved_mean = y_sampled.mean(0).cpu().numpy()
     moved_cov = torch.cov(y_sampled.T).cpu().numpy()
@@ -142,7 +140,10 @@ def bw_uvp(y_sampled, target_dict):
         target_mean.cpu().numpy(), target_cov.cpu().numpy()
     ) / target_var 
     return bw_uvp_val.item()
-
+    
+def cosine_similarity(x, y):
+    return torch.cosine_similarity(x[..., None], y.T, dim=-2)
+    
 @torch.no_grad()
 def inner_gw(x, y_sampled, kernel=kernel_2):
 
@@ -159,7 +160,7 @@ def top_accuracies(y_sampled, target_vectors, labels, top_n=(1, 5, 10)):
     #most_similar_vals, most_similar_ix = target.most_similar_ix(predictions, top_n.max(), batch_size)
     vectors_space = target_vectors.cpu().numpy().copy()
     #print(vectors_space.shape)
-    y_sampled_np = y_sampled.cpu().numpy()
+    y_sampled_np = y_sampled.cpu().numpy().copy()
     #print(y_sampled_np.shape)
     index = faiss.IndexFlatIP(y_sampled_np.shape[1])
     faiss.normalize_L2(vectors_space)
@@ -209,7 +210,7 @@ def foscttm2(y, y_sampled):
     return fracs
 
 @torch.no_grad()
-def cosine_similarity(y, y_sampled):
+def cosine_similarity_simple(y, y_sampled):
     return torch.cosine_similarity(y, y_sampled).mean().item()
 
 #@torch.no_grad()
@@ -236,9 +237,10 @@ def label_transfer(y, y_sampled, labels):
 def compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict):   
 
     x, y, y_sampled, labels = x.cpu(), y.cpu(), y_sampled.cpu(), labels.cpu()
+   
     
     cossim_vals, top_accuracies_vals = top_accuracies(y_sampled, target_vectors, labels, top_n=(1, 5, 10))
-    cossim_gt = cosine_similarity(y, y_sampled)
+    cossim_gt = cosine_similarity_simple(y, y_sampled)
     inner_gw_val = inner_gw(x, y_sampled)
     foscttm_val   = foscttm(y, y_sampled)
     
@@ -250,8 +252,81 @@ def compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict):
     metrics_dict['inner_gw'].append(inner_gw_val)
     metrics_dict['foscttm'].append(foscttm_val)
     
-    return metrics_dict
 
+    #distortion = compute_distortion(x, y_sampled)
+    #print('Distortion:', distortion.item())
+    #
+    #metrics_dict['distortion'].append(distortion)
+    
+    return metrics_dict
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+
+@torch.no_grad()
+def compute_metrics_2(x, y, y_sampled, labels, target_vectors, metrics_dict):   
+
+    x, y, y_sampled, labels = x.cpu(), y.cpu(), y_sampled.cpu(), labels.cpu()
+    #x = x_orig / (x_orig.norm(p=2, dim=1, keepdim=True) + 1e-10)
+
+    #print('metrics, x, y, y_sampled:', x.norm(dim=1).max().item(), y.norm(dim=1).max().item(), y_sampled.norm(dim=1).max().item())
+    
+    #y = y_orig / (y_orig.norm(p=2, dim=1, keepdim=True) + 1e-10)
+    #y_sampled = y_sampled_orig / (y_sampled_orig.norm(p=2, dim=1, keepdim=True) + 1e-10)
+
+    target_means = y.mean(0).cpu()#.numpy()
+    target_cov   = torch.cov(y.T).cpu()#.numpy()
+    
+    #print('before: x, y, y_sampled, target:',  x.norm(dim=1).max(), y.norm(dim=1).max(), y_sampled.norm(dim=1).max(), target_vectors.norm(dim=1).max())
+    
+    
+    cossim_vals, top_accuracies_vals = top_accuracies(y_sampled, target_vectors, labels, top_n=(1, 5, 10))
+    cossim_gt = cosine_similarity_simple(y, y_sampled)
+    inner_gw_val = inner_gw(x, y_sampled)
+    foscttm_val   = foscttm(y, y_sampled)
+    print('here1')
+    #pca = PCA(n_components=2)
+    #print('after top accs: y_orig, y_sampled_orig:', y_orig.norm(dim=1).max(), y_sampled_orig.norm(dim=1).max())
+    #y_pca = pca.fit_transform(y_orig.numpy())
+    #y_sampled_pca = pca.transform(y_sampled_orig.numpy())
+
+    #plt.scatter(*y_pca.T, label='GT samples')
+    #plt.scatter(*y_sampled_pca.T, label='Pred samples', alpha=0.2)
+    #plt.legend()
+    #plt.show()
+    
+    #print('after top accs: y, y_sampled:', y_orig.norm(dim=1).max(), y_sampled_orig.norm(dim=1).max())
+    mmd = compute_mmd(y, y_sampled)
+    print('here2')
+    
+    bw_uvp = compute_bw_uvp(y_sampled, target_means, target_cov)
+    print('here3')
+    
+    distortion = compute_distortion(x, y_sampled)
+    print('here4')
+    
+    sinkhorn_div = sinkhorn_divergence(y, y_sampled)
+    print('here5')
+  
+
+    #print('after all metrics: x, y, y_sampled, target:',  x.norm(dim=1).max(), y.norm(dim=1).max(), y_sampled.norm(dim=1).max(), target_vectors.norm(dim=1).max())
+    
+    
+    metrics_dict['Top@1'].append(top_accuracies_vals['Top@1'])
+    metrics_dict['Top@5'].append(top_accuracies_vals['Top@5'])
+    metrics_dict['Top@10'].append(top_accuracies_vals['Top@10'])
+    
+    metrics_dict['cossim_gt'].append(cossim_gt)
+    metrics_dict['inner_gw'].append(inner_gw_val)
+    metrics_dict['foscttm'].append(foscttm_val)
+    metrics_dict['mmd'].append(mmd)
+    
+    metrics_dict['bw_uvp'].append(bw_uvp)
+##
+    metrics_dict['distortion'].append(distortion)
+    metrics_dict['sinkhorn_divergence'].append(sinkhorn_div)
+    
+    return metrics_dict
+    
 @torch.no_grad()
 
 def calc_frac_idx(x1_mat,x2_mat):
@@ -287,3 +362,60 @@ def calc_domainAveraged_FOSCTTM(x1_mat, x2_mat):
     for i in range(len(fracs1)):
         fracs.append((fracs1[i]+fracs2[i])/2)  
     return fracs
+
+def SqEuclideanTorch(x, y):
+    return torch.sum((x - y) ** 2)
+
+from sklearn.metrics.pairwise import pairwise_distances        
+
+def compute_mmd(x, y):
+    x = x.detach().cpu().numpy()
+    y = y.detach().cpu().numpy()
+    
+    Kxx = pairwise_distances(x, x)
+    Kyy = pairwise_distances(y, y)
+    Kxy = pairwise_distances(x, y)
+
+    m = x.shape[0]
+    n = y.shape[0]
+    
+    c1 = 1 / ( m * (m - 1))
+    A = np.sum(Kxx - np.diag(np.diagonal(Kxx)))
+
+    # Term II
+    c2 = 1 / (n * (n - 1))
+    B = np.sum(Kyy - np.diag(np.diagonal(Kyy)))
+
+    # Term III
+    c3 = 1 / (m * n)
+    C = np.sum(Kxy)
+
+    # estimate MMD
+    mmd_est = -0.5*c1*A - 0.5*c2*B + c3*C
+    
+    return mmd_est      
+
+def compute_distortion(source_samples, target_samples):
+    n = source_samples.shape[0]
+    
+    #source_norm = torch.linalg.norm(source_samples, dim=1, keepdim=True)
+    #target_norm = torch.linalg.norm(target_samples, dim=1, keepdim=True)
+    
+    source_cost_torch = 1 - cosine_similarity(source_samples, source_samples) 
+    target_cost_torch = 1 - cosine_similarity(target_samples, target_samples) 
+
+    #source_cost_torch = cosine_similarity(source_samples, source_samples) * (source_norm @ source_norm.T)
+    #target_cost_torch = cosine_similarity(target_samples, target_samples) * (target_norm @ target_norm.T)
+
+    out = torch.mean(torch.vmap(SqEuclideanTorch)(source_cost_torch, target_cost_torch))/n
+
+    return out
+    
+from geomloss import SamplesLoss
+
+def sinkhorn_divergence(x,y):
+
+    loss = SamplesLoss(loss="sinkhorn", p=2, blur=0.01)
+    res = loss(x, y).item()
+    
+    return res

@@ -5,7 +5,7 @@ import scipy as sp
 from scipy.stats import describe
 from time import time
 import matplotlib.pyplot as plt
-from src.metrics import compute_metrics
+from src.metrics import compute_metrics_2
 from tqdm.auto import trange
 import wandb
 from src.utils import cosine_similarity
@@ -111,7 +111,7 @@ class AlignGW():
         q = ot.unif(y_train_np.shape[0])
         
         self.compute_distances(x_train_np, y_train_np)
-        metric_names = ['Top@1', 'Top@5', 'Top@10', 'cossim_gt', 'inner_gw', 'foscttm']
+        metric_names = ['Top@1', 'Top@5', 'Top@10', 'cossim_gt', 'inner_gw', 'foscttm', 'distortion', 'mmd', 'bw_uvp', 'sinkhorn_divergence']
 
         Cx = self.Cx 
         Cy = self.Cy 
@@ -146,18 +146,21 @@ class AlignGW():
                 continuous_solver = MLPRegressor(hidden_layer_sizes=256, random_state=1, max_iter=500)
                 
                 if self.toy_type is False:
-
+                    y_sampled_train_np = (T @ y_train_np)/T.sum(axis=1, keepdims=True)
+                    #print(y_train_np/y_sampled_train_np)
+                    y_sampled_train = torch.tensor(y_sampled_train_np).to(torch.float32)
+                    #y_sampled_train = torch.randn_like(y_sampled_train)
+                    metrics_dict_train = compute_metrics_2(x_train.cpu(), y_train.cpu(), y_sampled_train.cpu(), labels_train.cpu(), target_vectors, metrics_dict_train)
+                    
                     if wandb_report:
-                        y_sampled_train_np = (T @ y_train_np)/T.sum(axis=1, keepdims=True)
-                        y_sampled_train = torch.tensor(y_sampled_train_np).to(torch.float32)
-                        metrics_dict_train = compute_metrics(x_train.cpu(), y_train.cpu(), y_sampled_train.cpu(), labels_train.cpu(), target_vectors, metrics_dict_train)
+                        
                         report_wandb_fn(metrics_dict_train, metric_names, it, 'train')
-
+                        
                         continuous_solver.fit(x_train.cpu().numpy(), y_sampled_train.cpu().numpy())
                         y_sampled_test = continuous_solver.predict(x_test.cpu().numpy())
                         y_sampled_test = torch.tensor(y_sampled_test).to(torch.float32)
     #
-                        metrics_dict_test = compute_metrics(x_test.cpu(), y_test.cpu(), y_sampled_test.cpu(), labels_test.cpu(), target_vectors, metrics_dict_test)
+                        metrics_dict_test = compute_metrics_2(x_test.cpu(), y_test.cpu(), y_sampled_test.cpu(), labels_test.cpu(), target_vectors, metrics_dict_test)
                         report_wandb_fn(metrics_dict_test, metric_names, it, 'test')
                 else:
                     
@@ -190,7 +193,7 @@ class AlignGW():
     def valid_step(self, sampler_source, sampler_target, n_samples, metric_names, target_vectors, n_eval):
             
         metrics_dict = {metric_name:[] for metric_name in metric_names}
-        
+        print(metrics_dict)
         with torch.no_grad():
         
             sampler_source.reset_sampler()
@@ -209,6 +212,23 @@ class AlignGW():
 
                 y_sampled = torch.tensor(y_sampled).to(torch.float32)
 
-                metrics_dict = compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict)
+                metrics_dict = compute_metrics_2(x, y, y_sampled, labels, target_vectors, metrics_dict)
             
             return metrics_dict
+
+    def valid_step_2(self, source_samples, target_samples, n_samples, metric_names, target_vectors, n_eval):
+            
+        metrics_dict = {metric_name:[] for metric_name in metric_names}
+        x = source_samples[:]
+        y = target_samples[:]
+        
+        #print(metrics_dict)
+        with torch.no_grad():
+
+                    
+            x, y, labels = x.cpu(), y.cpu(), labels.cpu()
+            y_sampled = self.continuous_solver.predict(x.numpy())
+            y_sampled = torch.tensor(y_sampled).to(torch.float32)
+            metrics_dict = compute_metrics_2(x, y, y_sampled, labels, target_vectors, metrics_dict, valid_step)
+            
+        return metrics_dict

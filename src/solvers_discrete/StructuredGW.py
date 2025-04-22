@@ -1,7 +1,7 @@
 import torch
 from tqdm.auto import trange
 from tqdm import tqdm_notebook as tqdm
-from src.metrics import compute_metrics
+from src.metrics import compute_metrics_2
 import wandb
 import random
 import numpy as np
@@ -154,6 +154,8 @@ class StructuredGW():
         init_dual_a, init_dual_b = initializer(prob, *(None, None), lse_mode=True, rng=rng)
 
         metric_names = ['Top@1', 'Top@5', 'Top@10', 'cossim_gt', 'inner_gw', 'foscttm']
+        #metric_names = ['Top@1', 'Top@5', 'Top@10', 'cossim_gt', 'inner_gw', 'foscttm', 'distortion', 'mmd', 'bw_uvp', 'sinkhorn_divergence']
+        
 
         #report_keys = ['train_bary', 'train_entropic']
         metrics_dict_train = {metric_name:[] for metric_name in metric_names}
@@ -195,14 +197,14 @@ class StructuredGW():
                     if wandb_report:
                         y_sampled_train = entropic_pred(x_train.cpu().numpy(), y_train.cpu().numpy(), M, solver_state.g, b, self.eps)
                         y_sampled_train = torch.tensor(np.asarray(y_sampled_train)).to(torch.float32)
-                        metrics_dict_train = compute_metrics(x_train.cpu(), y_train.cpu(), y_sampled_train.cpu(), labels_train.cpu(), target_vectors, metrics_dict_train)
+                        metrics_dict_train = compute_metrics_2(x_train.cpu(), y_train.cpu(), y_sampled_train.cpu(), labels_train.cpu(), target_vectors, metrics_dict_train)
                         report_wandb_fn(metrics_dict_train, metric_names, it, 'train')
 
                         continuous_solver.fit(x_train.cpu().numpy(), y_sampled_train.cpu().numpy())
                         y_sampled_test = continuous_solver.predict(x_test.cpu().numpy())
                         y_sampled_test = torch.tensor(y_sampled_test).to(torch.float32)
     #
-                        metrics_dict_test = compute_metrics(x_test.cpu(), y_test.cpu(), y_sampled_test.cpu(), labels_test.cpu(), target_vectors, metrics_dict_test)
+                        metrics_dict_test = compute_metrics_2(x_test.cpu(), y_test.cpu(), y_sampled_test.cpu(), labels_test.cpu(), target_vectors, metrics_dict_test)
                         report_wandb_fn(metrics_dict_test, metric_names, it, 'test')
                 else:
                     T = np.asarray(solver_state.matrix)
@@ -244,14 +246,14 @@ class StructuredGW():
         
         with torch.no_grad():
         
-            sampler_source.reset_sampler()
+            #sampler_source.reset_sampler()
 
             for _ in trange(n_eval, leave=False, desc="Evaluation"):
                 
                 if sampler_target is None:
                     x, y, labels = sampler_source.sample(n_samples)
                 else:
-                    sampler_target.reset_sampler()
+                    #sampler_target.reset_sampler()
                     x, labels = sampler_source.sample(n_samples)
                     y, _      = sampler_target.sample(n_samples)
                     
@@ -263,3 +265,21 @@ class StructuredGW():
                 metrics_dict = compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict)
             
             return metrics_dict
+
+    def valid_step_2(self, source_samples, target_samples, n_samples, metric_names, target_vectors, n_eval):
+            
+        metrics_dict = {metric_name:[] for metric_name in metric_names}
+        x = source_samples[:]
+        y = target_samples[:]
+        
+        #print(metrics_dict)
+        with torch.no_grad():
+
+                    
+            x, y, labels = x.cpu(), y.cpu(), labels.cpu()
+            y_sampled = self.continuous_solver.predict(x.numpy())
+            y_sampled = torch.tensor(y_sampled).to(torch.float32)
+            metrics_dict = compute_metrics_2(x, y, y_sampled, labels, target_vectors, metrics_dict, valid_step)
+            
+        return metrics_dict
+    

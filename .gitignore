@@ -18,6 +18,9 @@ src/solvers_continuous/*
 !src/solvers_continuous/FlowGW_mb.py
 !src/solvers_continuous/CycleGW.py
 
+src/models/LightSB.py
+src/models/TRIP_SB.py
+
 src/dataset_loaders-Copy1.py
 src/dataset_loaders_new.py
 src/dataset_loaders_old_old.py

@@ -1,7 +1,7 @@
 import torch
 from tqdm.auto import trange
 from tqdm import tqdm_notebook as tqdm
-from src.metrics import compute_metrics
+from src.metrics import compute_metrics_2
 import wandb
 from src.utils import computePotGrad
 
@@ -18,7 +18,6 @@ class NeuralGW:
         self.reg = reg
         
     def train_epoch(self, sampler_source, sampler_target, n_samples, n_iters, epoch, wandb_report):
-        
         
         self.critic_model.train()
         self.mover_model.train()
@@ -77,9 +76,9 @@ class NeuralGW:
                 wandb.log(loss_metrics)
                     
 
-        P = self.cost_model.matrix  
+        #P = self.cost_model.matrix  
 
-        return P
+        return 
 
     def train_epoch_toy(self, sampler_source, sampler_target, n_samples, n_iters, epoch, wandb_report):
         
@@ -152,7 +151,7 @@ class NeuralGW:
                     
                 y_sampled = self.mover_model(x)
                     
-                metrics_dict = compute_metrics(x, y, y_sampled, labels, target_vectors, metrics_dict)
+                metrics_dict = compute_metrics_2(x, y, y_sampled, labels, target_vectors, metrics_dict)
             
             return metrics_dict
         

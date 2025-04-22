@@ -119,7 +119,8 @@ def load_vectors(data_path, config):
         target_vectors = target_model.vectors[:]
 
     if DATASET_NAME == 'muse':
-
+        VS = space_dataset.VS
+        
         
         data_path_source = f'../datasets/{DATASET_NAME}_{SOURCE_LANG}_{EMB_TYPE_SOURCE}_{SOURCE_DIM}_{VS//1000}K.d2v'
         data_path_target = f'../datasets/{DATASET_NAME}_{TARGET_LANG}_{EMB_TYPE_TARGET}_{TARGET_DIM}_{VS//1000}K.d2v'
@@ -272,6 +273,116 @@ def get_samplers(config, source_vectors, target_vectors):
     #    source_vectors /= np.linalg.norm(source_vectors, axis=1)[:,None]
     #    target_vectors /= np.linalg.norm(target_vectors, axis=1)[:,None]
 
+    train_source_dataset = TensorDataset(source_vectors[indices_train_source], indices_train_source)
+    train_target_dataset = TensorDataset(target_vectors[indices_train_target], indices_train_target)
+
+    train_source_loader = DataLoader(train_source_dataset, batch_size=batch_size_train, shuffle=SHUFFLE)
+    train_target_loader = DataLoader(train_target_dataset, batch_size=batch_size_train, shuffle=SHUFFLE)
+    
+    train_source_sampler = LoaderSamplerTrain(train_source_loader, device=DEVICE)
+    train_target_sampler = LoaderSamplerTrain(train_target_loader, device=DEVICE)
+    
+    testset      = TensorDataset(source_vectors[indices_test], target_vectors[indices_test], indices_test)
+    testloader   = DataLoader(testset, batch_size=batch_size_test)
+    test_sampler = LoaderSamplerTest(testloader, device=DEVICE)
+    
+    return source_vectors, target_vectors, train_source_sampler, train_target_sampler, test_sampler
+
+def get_samplers_paired(config, source_vectors, target_vectors):
+
+    space_dataset   = SimpleNamespace(**config['dataset']) 
+    N_EVAL          = space_dataset.N_EVAL
+    N_MAX_SAMPLES   = space_dataset.N_MAX_SAMPLES
+    N_TRAIN_SAMPLES = space_dataset.N_TRAIN_SAMPLES
+    N_TEST_SAMPLES  = space_dataset.N_TEST_SAMPLES * N_EVAL
+    ALPHA           = space_dataset.ALPHA
+    DEVICE          = space_dataset.DEVICE
+    SHUFFLE         = space_dataset.SHUFFLE
+
+    TRAIN_TYPE      = config['training']['TRAIN_TYPE']
+
+    assert N_MAX_SAMPLES - N_TEST_SAMPLES >= N_TRAIN_SAMPLES, 'Reduce the number of train or test samples.'   
+    
+    random.seed(space_dataset.SEED)
+    indices_train = random.sample(range(0, N_TRAIN_SAMPLES), N_TRAIN_SAMPLES) 
+    indices_test  = range(N_MAX_SAMPLES - N_TEST_SAMPLES, N_MAX_SAMPLES)
+    indices_test = torch.tensor(indices_test).to(torch.int32)
+    
+    start_shared_target = int(len(indices_train) * (0.5 - ALPHA*0.5))
+    end_shared_target   = int(len(indices_train) * (1.0 - ALPHA*0.5))
+    
+    paired_indices          = indices_train[start_shared_target:int(len(indices_train) * (0.5))]
+    unpaired_indices_source = indices_train[:start_shared_target]
+    unpaired_indices_target = indices_train[start_shared_target:end_shared_target]
+    
+    indices_train_source = paired_indices + unpaired_indices_source
+    indices_train_target = paired_indices + unpaired_indices_target
+    
+    source_len = len(indices_train_source)
+    target_len = len(indices_train_target)
+    
+    if source_len > target_len:
+        indices_train_source = indices_train_source[source_len-target_len:]
+    if source_len < target_len:
+        indices_train_target = indices_train_target[:source_len]
+    
+    intersected_indices = list(set(indices_train_source).intersection(indices_train_target))
+    
+    assert np.isclose(len(intersected_indices)/(N_TRAIN_SAMPLES/2), ALPHA, rtol=1e-2)
+    
+    
+    
+    #intersected_indices = list(set(indices_train_source.numpy()).intersection(indices_train_target.numpy()))
+        
+    if TRAIN_TYPE == 'continuous':
+        batch_size_train = space_dataset.BATCH_SIZE_TRAIN
+        batch_size_test = space_dataset.BATCH_SIZE_TEST
+        
+    if TRAIN_TYPE == 'discrete':
+        batch_size_train = source_len
+        batch_size_test = space_dataset.N_TEST_SAMPLES
+
+    bs = batch_size_train
+    n_batches = N_TRAIN_SAMPLES / bs / 2
+    n_paired  = int(ALPHA * bs)
+    n_unpaired = int((1 - ALPHA) * bs)
+    if n_paired + n_unpaired < bs:
+        n_unpaired += bs - (n_paired + n_unpaired)
+    source_new = []
+    target_new = []
+    
+    for i in range(int(n_batches)):
+        new_s = paired_indices[i*n_paired:(i+1)*n_paired] + unpaired_indices_source[i*n_unpaired:(i+1)*n_unpaired]
+        new_t = paired_indices[i*n_paired:(i+1)*n_paired] + unpaired_indices_target[i*n_unpaired:(i+1)*n_unpaired]
+        new_t = list(np.random.permutation(new_t))
+        intersected_indices = list(set(new_s).intersection(new_t))
+        #print(len(intersected_indices)/(bs))
+        source_new = source_new + new_s
+        target_new = target_new + new_t
+
+    for i in range(int(n_batches)):
+        #intersected_indices = list(set(source_new[i*bs:(i+1)*bs]).intersection(target_new[i*bs:(i+1)*bs]))
+        #print(source_new[i*bs:(i+1)*bs])
+        #print(target_new[i*bs:(i+1)*bs])
+        
+        intersected_indices = list(set(source_new[i*bs:(i+1)*bs]).intersection(target_new[i*bs:(i+1)*bs]))
+        
+        #print(len(intersected_indices)/(bs))
+        #print(ALPHA)
+        assert np.isclose(len(intersected_indices)/(bs), ALPHA, rtol=1e-1)
+        
+
+    indices_train_source = torch.tensor(source_new[:]).to(torch.int32)
+    indices_train_target = torch.tensor(target_new[:]).to(torch.int32)
+
+    print('Source pairs...')
+    print(len(indices_train_source[int(len(indices_train) * (0.5-ALPHA*0.5)):]))
+    print(indices_train_source[int(len(indices_train) * (0.5-ALPHA*0.5)):])
+        
+    print('Target pairs...')
+    print(len(indices_train_target[:int(len(indices_train) * ALPHA * 0.5)]))
+    print(indices_train_target[:int(len(indices_train) * ALPHA * 0.5)])   
+    
     train_source_dataset = TensorDataset(source_vectors[indices_train_source], indices_train_source)
     train_target_dataset = TensorDataset(target_vectors[indices_train_target], indices_train_target)
 

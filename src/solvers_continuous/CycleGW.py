@@ -1,7 +1,7 @@
 import torch
 from tqdm.auto import trange
 from tqdm import tqdm_notebook as tqdm
-from src.metrics import compute_metrics
+from src.metrics import compute_metrics_2
 import wandb
 from src.utils import computePotGrad
 
@@ -214,8 +214,8 @@ class CycleGW:
                     sampled_F_x = self.F_model(x)
                     sampled_G_y = self.G_model(y)
                     
-                    metrics_dict_F = compute_metrics(x, y, sampled_F_x, labels, target_vectors, metrics_dict_F)
-                    metrics_dict_G = compute_metrics(y, x, sampled_G_y, labels, source_vectors, metrics_dict_G)
+                    metrics_dict_F = compute_metrics_2(x, y, sampled_F_x, labels, target_vectors, metrics_dict_F)
+                    metrics_dict_G = compute_metrics_2(y, x, sampled_G_y, labels, source_vectors, metrics_dict_G)
                     
                 else:
                     x, labels_x = sampler_source.sample(n_samples)
@@ -224,8 +224,8 @@ class CycleGW:
                     sampled_F_x = self.F_model(x)
                     sampled_G_y = self.G_model(y)
                     
-                    metrics_dict_F = compute_metrics(x, y, sampled_F_x, labels_x, target_vectors, metrics_dict_F)
-                    metrics_dict_G = compute_metrics(y, x, sampled_G_y, labels_y, source_vectors, metrics_dict_G)
+                    metrics_dict_F = compute_metrics_2(x, y, sampled_F_x, labels_x, target_vectors, metrics_dict_F)
+                    metrics_dict_G = compute_metrics_2(y, x, sampled_G_y, labels_y, source_vectors, metrics_dict_G)
                 
             return metrics_dict_F, metrics_dict_G
         

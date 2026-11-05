@@ -1,0 +1,38 @@
+
+experiment_type: embedding
+solver_type: discrete
+device: cuda
+
+dataset:
+  dataset_name: twitter
+  data_path: ../datasets
+  emb_type_source: glove
+  emb_type_target: glove
+  source_dim: 100
+  target_dim: 50
+
+  n_max_samples: 400000
+  n_train_samples: 6000
+  n_test_samples: 2048
+  n_eval: 1
+  alpha: 1.0
+
+  seed: 1
+  test_seed: 0
+  shuffle: true
+
+solver:
+  solver_name: StructuredGW
+  n_epochs: 2000
+  report_every: 200
+  m_init: null
+  method_m: exact
+  eps: 1.0e-3
+  tol: 0.001
+  inference_type: entropic
+
+metrics:
+  top_n: [1, 5, 10]
+  mmd_sigma: 10.0
+  sinkhorn_blur: 0.01
+  distortion_cost: cosine

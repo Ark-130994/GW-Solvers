@@ -1,0 +1,23 @@
+
+experiment_type: toy
+solver_type: discrete
+device: cuda
+
+dataset:
+  toy_type: toy_3d_2d
+  n_clusters_source: 10
+  n_clusters_target: 10
+  n_train_samples: 5000
+  n_test_samples: 2048
+  seed: 42
+
+solver:
+  solver_name: FlowGW
+  n_epochs: 200
+  report_every: 20
+  eps: 1.0e-3
+  embed_dim: 256
+  n_freq: 10
+  n_layers: 4
+  cost_fn: cosine
+  lr: 0.0001

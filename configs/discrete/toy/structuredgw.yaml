@@ -1,0 +1,22 @@
+
+experiment_type: toy
+solver_type: discrete
+device: cuda
+
+dataset:
+  toy_type: toy_3d_2d
+  n_clusters_source: 10
+  n_clusters_target: 10
+  n_train_samples: 10000
+  n_test_samples: 2048
+  seed: 42
+
+solver:
+  solver_name: StructuredGW
+  n_epochs: 200
+  report_every: 20
+  m_init: null
+  method_m: exact
+  eps: 0.0001
+  tol: 0.001
+  inference_type: entropic

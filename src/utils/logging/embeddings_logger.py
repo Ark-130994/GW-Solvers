@@ -18,6 +18,8 @@ class EmbeddingsOfflineLogger:
         self.metric_history = {'train': [], 'test': []}
         self.indices        = None
 
+        self.is_cycle_gw = config['solver']['solver_name'] == 'CycleGW'
+
     def save_csv(self, name, history):
         if not history:
             return
@@ -77,6 +79,7 @@ class EmbeddingsOfflineLogger:
         self.save_csv(f'metrics_{split}.csv', self.metric_history[split])
         self.plot_history(self.metric_history[split], f'metrics_{split}.png', ncols=3)
 
+    
     def __call__(self, step, model, history, dataset):
         self.save_csv('losses.csv', history)
         self.plot_history(history, 'losses.png')
@@ -87,6 +90,56 @@ class EmbeddingsOfflineLogger:
                 'red': build_index(dataset['target_reduced']),
             }
 
+            if self.is_cycle_gw:
+                self.indices['source_full'] = build_index(dataset['source_full'])
+                self.indices['source_red']  = build_index(dataset['source_reduced'])
+
         for split in ('train', 'test'):
             if f'target_{split}_pred' in dataset:
-                self.evaluate(step, dataset, split)
+                if self.is_cycle_gw:
+                    self.evaluate_cycle(step, model, dataset, split, 'direct')
+                    self.evaluate_cycle(step, model, dataset, split, 'inverse')
+                else:
+                    self.evaluate(step, dataset, split)
+
+                
+    def evaluate_cycle(self, step, model, dataset, split, direction):
+
+        if direction == 'direct':
+            source     = dataset[f'source_{split}']
+            target     = dataset[f'target_{split}']
+            prediction = dataset[f'target_{split}_pred']
+            labels     = dataset[f'labels_{split}']
+            labels_red = dataset[f'labels_{split}_red']
+            index_full = self.indices['full']
+            index_red  = self.indices['red']
+
+        else:
+            source     = dataset[f'target_{split}']
+            target     = dataset[f'source_{split}']
+            prediction = model.predict_inverse(source)
+            labels     = dataset['labels_target_train'] if split == 'train' else dataset['labels_test']
+            labels_red = labels
+            index_full = self.indices['source_full']
+            index_red  = self.indices['source_red']
+
+        metrics = compute_metrics(
+            source=source,
+            target=target,
+            prediction=prediction,
+            labels=labels,
+            labels_red=labels_red,
+            index_full=index_full,
+            index_red=index_red,
+            split=split,
+            top_n=self.metrics_cfg.get('top_n', (1, 5, 10)),
+            mmd_sigma=self.metrics_cfg.get('mmd_sigma', 10.0),
+            sinkhorn_blur=self.metrics_cfg.get('sinkhorn_blur', 0.01),
+            distortion_cost=self.metrics_cfg.get('distortion_cost', 'cosine'),
+        )
+
+        name = f'{split}_{direction}'
+        self.metric_history.setdefault(name, []).append({'step': step, **metrics})
+        self.save_csv(f'metrics_{name}.csv', self.metric_history[name])
+        self.plot_history(self.metric_history[name], f'metrics_{name}.png', ncols=3)
+

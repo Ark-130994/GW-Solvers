@@ -11,7 +11,7 @@ dataset:
   source_dim: 100
   target_dim: 50
 
-  n_max_samples: 400000
+  n_max_samples: 400048
   n_train_samples: 6000
   n_test_samples: 2048
   n_eval: 1

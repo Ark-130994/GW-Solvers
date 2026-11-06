@@ -1,0 +1,41 @@
+
+experiment_type: embedding
+solver_type: continuous
+device: cuda
+
+dataset:
+  dataset_name: twitter
+  data_path: ../datasets
+  emb_type_source: glove
+  emb_type_target: glove
+  source_dim: 100
+  target_dim: 50
+  n_max_samples: 400048
+  n_train_samples: 388000
+  n_test_samples: 2048
+  n_eval: 1
+  batch_size_train: 256
+  batch_size_test: 256
+  alpha: 1.0
+  paired: true
+  shuffle: false
+  seed: 1
+  test_seed: 0
+
+solver:
+  solver_name: FlowGW
+  n_epochs: 700
+  report_every: 50
+  seed: 1
+  eps: 0.0001
+  embed_dim: 1024
+  n_freq: 128
+  n_layers: 4
+  cost_fn: cosine
+  lr: 0.0001
+
+metrics:
+  top_n: [1, 5, 10]
+  mmd_sigma: 10.0
+  sinkhorn_blur: 0.01
+  distortion_cost: cosine

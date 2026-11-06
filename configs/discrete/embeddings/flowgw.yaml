@@ -11,7 +11,7 @@ dataset:
   source_dim: 100
   target_dim: 50
 
-  n_max_samples: 400000
+  n_max_samples: 400048
   n_train_samples: 6000
   n_test_samples: 2048
   n_eval: 1
@@ -19,12 +19,12 @@ dataset:
 
   seed: 42
   test_seed: 0
-  shuffle: false
+  shuffle: true
 
 solver:
   solver_name: FlowGW
-  n_epochs: 200
-  report_every: 20
+  n_epochs: 700
+  report_every: 50
   seed: 0
   eps: 1.0e-4
   embed_dim: 256

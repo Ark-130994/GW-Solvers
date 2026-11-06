@@ -62,4 +62,45 @@ class ToyOfflineLogger:
 
     def __call__(self, step, model, history, dataset):
         self.plot_history(history)
-        self.plot_samples(step, dataset)
+        
+        if model.__class__.__name__ == 'CycleGW':
+            self.plot_cycle_samples(step, model, dataset)
+        else:
+            self.plot_samples(step, dataset)
+
+
+
+    def plot_cycle_samples(self, step, model, dataset):
+
+        def to_numpy(x):
+            return x.detach().cpu().numpy() if torch.is_tensor(x) else np.asarray(x)
+
+        source = to_numpy(dataset['source_test'])
+        target = to_numpy(dataset['target_test'])
+
+        source_pred = to_numpy(dataset['target_test_pred'])
+        target_pred = to_numpy(model.predict_inverse(dataset['target_test']))
+
+        labels_source = to_numpy(dataset['source_test_labels'])
+        labels_target = to_numpy(dataset['target_test_labels'])
+
+        n_clusters = int(max(labels_source.max(), labels_target.max())) + 1
+
+        panels = [
+            ('Source X', source, labels_source),
+            ('Target Y', target, labels_target),
+            ('F(X)', source_pred, labels_source),
+            ('G(Y)', target_pred, labels_target),
+        ]
+
+        fig = plt.figure(figsize=(10, 9))
+
+        for i, (title, values, labels) in enumerate(panels, 1):
+            ax = fig.add_subplot(2, 2, i, projection='3d' if values.shape[1] == 3 else None)
+            ax.scatter(*values.T, c=labels, cmap=plt.get_cmap('Spectral', n_clusters),
+                    vmin=-0.5, vmax=n_clusters - 0.5, s=8, alpha=0.7)
+            ax.set_title(title)
+
+        fig.tight_layout()
+        fig.savefig(self.plot_dir / f'test_{step:06d}.png', dpi=150)
+        plt.close(fig)

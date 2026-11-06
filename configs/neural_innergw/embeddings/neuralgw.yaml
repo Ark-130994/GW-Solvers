@@ -1,0 +1,60 @@
+
+experiment_type: embedding
+solver_type: neural_innergw
+device: cuda
+
+dataset:
+  dataset_name: twitter
+  data_path: ../datasets
+  emb_type_source: glove
+  emb_type_target: glove
+  source_dim: 100
+  target_dim: 50
+  n_max_samples: 400048
+  n_train_samples: 388000
+  n_test_samples: 2048
+  n_eval: 1
+  batch_size_train: 512
+  batch_size_test: 512
+  alpha: 1.0
+  paired: false
+  shuffle: true
+  seed: 0
+  test_seed: 0
+  init_P_samples: 10000
+
+solver:
+  solver_name: NeuralGW
+  n_epochs: 140
+  report_every: 10
+
+  hidden_sizes_mover_mlp: [1024, 1024, 1024, 1024]
+  hidden_sizes_critic_mlp: [1024, 1024, 1024, 1024]
+
+  mover_lr: 0.0001
+  critic_lr: 0.0001
+  cost_lr: 0.0001
+
+  cost_iters: 1
+  critic_iters: 1
+  mover_iters: 5
+
+  reg_critic: 0.0
+
+  init_P: true
+  epochs_init_P: 15
+
+  early_stopping:
+    enabled: true
+    metric_split: test
+    metric_name: Top@1
+    min_delta: 0.001
+    degradation_patience: 5
+    plateau_patience: 3
+    good_threshold: 0.95
+
+metrics:
+  top_n: [1, 5, 10]
+  mmd_sigma: 10.0
+  sinkhorn_blur: 0.01
+  distortion_cost: cosine

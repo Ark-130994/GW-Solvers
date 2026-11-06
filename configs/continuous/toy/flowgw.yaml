@@ -1,0 +1,31 @@
+
+experiment_type: toy
+solver_type: continuous
+device: cuda
+
+dataset:
+  toy_type: toy_3d_2d
+  n_clusters_source: 10
+  n_clusters_target: 10
+  n_train_samples: 5000
+  n_test_samples: 2048
+  batch_size_train: 256
+  seed: 42
+
+solver:
+  solver_name: FlowGW
+  n_epochs: 500
+  report_every: 50
+  seed: 0
+  eps: 0.0001
+  embed_dim: 1024
+  n_freq: 128
+  n_layers: 4
+  cost_fn: cosine
+  lr: 0.0001
+
+metrics:
+  top_n: [1, 5, 10]
+  mmd_sigma: 10.0
+  sinkhorn_blur: 0.01
+  distortion_cost: cosine
